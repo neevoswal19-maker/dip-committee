@@ -413,17 +413,66 @@ def get_engine() -> Engine:
             # spell would otherwise hit a closed socket.
             kwargs.update({"pool_pre_ping": True, "pool_recycle": 300})
 
-            # Hosted Postgres requires TLS. config.database_url() strips
-            # libpq's ?sslmode=require because pg8000 does not understand it;
-            # this is where the equivalent is actually applied.
-            if "pg8000" in url:
-                import ssl
+            # config.database_url() strips libpq's ?sslmode=require because
+            # pg8000 does not understand it. This is where the equivalent is
+            # actually applied - and it is the *only* thing keeping the
+            # connection encrypted.
+            #
+            # Neon's pooled endpoint accepts plaintext connections, verified
+            # directly: a pg8000 connect with ssl_context=None succeeds. So a
+            # failure to apply this would not raise, it would quietly send
+            # credentials and portfolio data in the clear. Hence
+            # assert_encrypted() below, and hence this applying to every
+            # Postgres URL rather than matching on a driver substring.
+            import ssl
 
-                context = ssl.create_default_context()
-                kwargs["connect_args"] = {"ssl_context": context}
+            kwargs["connect_args"] = {"ssl_context": ssl.create_default_context()}
         _engine = create_engine(url, **kwargs)
         log.debug("DB engine created for %s", url.split("@")[-1])
     return _engine
+
+
+def assert_encrypted() -> bool:
+    """Confirm a remote database connection is actually using TLS.
+
+    Returns True for SQLite, which is a local file and has no transport.
+
+    This exists because the usual safeguard was deliberately removed:
+    `config.database_url()` strips `?sslmode=require` so pg8000 will accept
+    the URL, and Neon's pooled endpoint happily serves plaintext. Encryption
+    therefore rests entirely on connect_args being applied correctly, and a
+    silent failure there looks identical to success. So it is checked rather
+    than assumed.
+
+    Raises RuntimeError on a plaintext remote connection rather than warning,
+    because the thing crossing the wire is database credentials and a
+    portfolio.
+    """
+    import ssl
+
+    engine = get_engine()
+    if engine.url.get_backend_name() == "sqlite":
+        return True
+
+    raw = engine.raw_connection()
+    try:
+        sock = getattr(raw.driver_connection, "_usock", None)
+        encrypted = isinstance(sock, ssl.SSLSocket)
+        if encrypted:
+            log.info(
+                "Database connection encrypted: %s / %s",
+                sock.version(), sock.cipher()[0],
+            )
+        else:
+            raise RuntimeError(
+                "The database connection is NOT encrypted. config.database_url() "
+                "strips sslmode so pg8000 accepts the URL, and TLS is meant to be "
+                "applied through connect_args in db.get_engine() - that has not "
+                "happened. Refusing to continue over plaintext."
+            )
+        return encrypted
+    finally:
+        raw.close()
 
 
 def init_db(drop: bool = False) -> None:

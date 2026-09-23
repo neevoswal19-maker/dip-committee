@@ -162,6 +162,10 @@ def main() -> int:
     cfg = load_config()
     db.init_db()
 
+    # Fails loudly rather than shipping credentials over plaintext. See
+    # db.assert_encrypted for why this cannot be assumed.
+    db.assert_encrypted()
+
     if args.no_alerts:
         telegram.send = lambda *a, **k: False  # type: ignore[assignment]
         log.info("Alerts disabled for this run")

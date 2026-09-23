@@ -28,6 +28,13 @@ def main() -> int:
         db.init_db()
         backend = db.get_engine().url.get_backend_name()
         print(f"database      OK ({backend})")
+        if backend != "sqlite":
+            try:
+                db.assert_encrypted()
+                print("encryption    TLS verified on the live connection")
+            except RuntimeError as exc:
+                problems.append(str(exc))
+                print("encryption    NOT ENCRYPTED")
         if backend == "sqlite":
             problems.append(
                 "running on SQLite - in a deployed environment this is ephemeral "

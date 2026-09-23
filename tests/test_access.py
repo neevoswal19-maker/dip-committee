@@ -22,12 +22,19 @@ GATE_VARS = (
 
 @pytest.fixture
 def env(monkeypatch):
-    """Load src.config with an exactly-specified environment."""
+    """Load src.config with an exactly-specified environment.
+
+    Unset variables are set to "" rather than deleted. `src.config` calls
+    `load_dotenv()` at import, and `importlib.reload` re-runs it - so a
+    deleted variable is immediately restored from the developer's own .env
+    file and the test ends up asserting against their real credentials.
+    `load_dotenv` skips any key already present in the environment, and ""
+    is falsy everywhere the gate logic looks, so this pins the environment
+    without depending on whether a .env exists.
+    """
     def configure(**values: str):
         for name in GATE_VARS:
-            monkeypatch.delenv(name, raising=False)
-        for name, value in values.items():
-            monkeypatch.setenv(name, value)
+            monkeypatch.setenv(name, values.get(name, ""))
 
         import src.config as config
         importlib.reload(config)
@@ -133,3 +140,51 @@ class TestDeploymentDetection:
     def test_a_local_sqlite_url_is_left_alone(self, env):
         config = env()
         assert config.database_url().startswith("sqlite:///")
+
+
+class TestLibpqParameterStripping:
+    """Hosted providers hand out libpq strings; pg8000 is not libpq.
+
+    Neon's default carries both sslmode and channel_binding. Passing either
+    to pg8000 raises on connect, so they are stripped here and TLS is applied
+    through connect_args instead - which means stripping them and forgetting
+    the connect_args would connect in the clear.
+    """
+
+    @pytest.mark.parametrize("param", [
+        "sslmode=require", "channel_binding=require", "sslrootcert=/x/ca.pem",
+        "target_session_attrs=read-write", "gssencmode=disable",
+    ])
+    def test_each_libpq_parameter_is_removed(self, env, param):
+        config = env(DATABASE_URL=f"postgresql://u:p@host/db?{param}")
+        url = config.database_url()
+
+        assert param.split("=")[0] not in url
+        assert url == "postgresql+pg8000://u:p@host/db"
+
+    def test_the_real_neon_shape(self, env):
+        """Exactly what Neon's Connect dialog produces."""
+        config = env(
+            DATABASE_URL=(
+                "postgresql://neondb_owner:npg_secret@ep-little-shape-b3ejpkvi-pooler"
+                ".c-4.ap-southeast-1.aws.neon.tech/neondb"
+                "?sslmode=require&channel_binding=require"
+            )
+        )
+        url = config.database_url()
+
+        assert url == (
+            "postgresql+pg8000://neondb_owner:npg_secret@ep-little-shape-b3ejpkvi"
+            "-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb"
+        )
+        assert "?" not in url and "&" not in url
+
+    def test_parameters_pg8000_understands_are_kept(self, env):
+        config = env(
+            DATABASE_URL="postgresql://u:p@host/db?sslmode=require&application_name=dip"
+        )
+        url = config.database_url()
+
+        assert "sslmode" not in url
+        assert "application_name=dip" in url
+        assert url.count("?") == 1, "the surviving parameter must start a clean query string"

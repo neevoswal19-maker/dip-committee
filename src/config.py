@@ -109,15 +109,29 @@ def database_url() -> str:
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+pg8000://", 1)
 
-        # Neon and most hosted Postgres require TLS and express it as
-        # ?sslmode=require, which is libpq's spelling. pg8000 does not accept
-        # it as a URL parameter and would raise on connect, so it is stripped
-        # here and TLS is enabled through connect_args in db.get_engine().
-        if "sslmode=" in url:
+        # Hosted Postgres hands out libpq connection strings. pg8000 is not
+        # libpq and rejects its TLS parameters outright, so they are stripped
+        # here and TLS is applied through connect_args in db.get_engine()
+        # instead. Neon's default string carries both sslmode and
+        # channel_binding; other providers add their own.
+        #
+        # Stripped by name rather than by clearing the query string, because
+        # parameters pg8000 *does* understand - application_name, timeout -
+        # are worth keeping.
+        libpq_only = (
+            "sslmode", "channel_binding", "sslrootcert", "sslcert", "sslkey",
+            "sslcrl", "sslcompression", "gssencmode", "krbsrvname",
+            "target_session_attrs", "requiressl", "options",
+        )
+        if "?" in url:
             import re
 
-            url = re.sub(r"[?&]sslmode=[^&]*", "", url)
-            url = url.replace("?&", "?").rstrip("?&")
+            for name in libpq_only:
+                url = re.sub(rf"[?&]{name}=[^&]*", "", url)
+            # Tidy up whatever separators the removals left behind.
+            url = re.sub(r"\?&+", "?", url).rstrip("?&")
+            if "?" not in url and "&" in url:
+                url = url.replace("&", "?", 1)
 
         return url
     local = load_config().get("database.local_url", "sqlite:///data/screener.db")
