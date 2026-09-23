@@ -169,7 +169,9 @@ def persist_report(report: CommitteeReport) -> int:
             rows.append(_verdict_row(run_id, leads_module.as_verdict(desk)))
         rows.append(_verdict_row(run_id, cmio_module.as_verdict(report)))
 
-        conn.execute(db.bot_verdicts.insert(), rows)
+        # One statement, not one per verdict. pg8000 has no fast
+        # executemany, so a list of dicts costs a round trip each.
+        conn.execute(db.bot_verdicts.insert().values(rows))
 
     return run_id
 

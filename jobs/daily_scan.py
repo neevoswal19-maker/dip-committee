@@ -42,8 +42,14 @@ logging.basicConfig(
 log = logging.getLogger("daily_scan")
 
 
-def store_todays_delivery(cfg) -> int:
-    """Persist the latest session so history accumulates run over run."""
+def store_todays_delivery(cfg, index: str | None = None) -> int:
+    """Persist the latest session so history accumulates run over run.
+
+    Restricted to the screening universe. The bhavcopy holds every NSE
+    equity (~3,500); storing the ~2,900 outside the index costs round trips
+    for rows nothing ever reads, and pg8000 charges one round trip per row
+    against a database that may be on another continent.
+    """
     trade_date = nse.last_trading_day()
     result = nse.get_bhavcopy(trade_date)
 
@@ -51,7 +57,12 @@ def store_todays_delivery(cfg) -> int:
         log.warning("No bhavcopy for %s (%s)", trade_date, result.note)
         return 0
 
-    stored = nse.store_delivery_bars(result.value, trade_date)
+    universe = nse.get_universe(index or cfg.get("universe.index", "NIFTY 500"))
+    symbols = {s.symbol for s in (universe.value or [])} or None
+    if symbols:
+        log.info("Storing delivery for %d universe symbols", len(symbols))
+
+    stored = nse.store_delivery_bars(result.value, trade_date, symbols=symbols)
     log.info("Stored %d delivery bars for %s", stored, trade_date)
     return stored
 
@@ -174,7 +185,7 @@ def main() -> int:
 
     try:
         log.info("--- storing today's delivery")
-        store_todays_delivery(cfg)
+        store_todays_delivery(cfg, args.index)
 
         log.info("--- scanning")
         summary = scan.run_scan(

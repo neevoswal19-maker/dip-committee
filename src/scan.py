@@ -138,7 +138,9 @@ def run_scan(
 
         if rows:
             with db.connection() as conn:
-                conn.execute(db.candidates.insert(), rows)
+                # One statement, not one per candidate - see
+                # nse.store_delivery_bars for why this matters.
+                conn.execute(db.candidates.insert().values(rows))
 
         # Refresh the stock reference table from what the scan just saw.
         _upsert_stocks(results)

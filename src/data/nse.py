@@ -624,14 +624,31 @@ def _delivery_from_db(symbol: str, days: int, end: date) -> pd.DataFrame | None:
     return frame.set_index("date").sort_index()
 
 
-def store_delivery_bars(bhavcopy: pd.DataFrame, trade_date: date) -> int:
+#: Rows per INSERT statement. pg8000 has no fast-executemany - passing a list
+#: of dicts sends one round trip per row, which against a Neon instance on
+#: another continent (~250ms) turns 3,500 rows into fifteen minutes of
+#: apparent hang. A multi-VALUES statement makes it one round trip per chunk.
+INSERT_CHUNK = 500
+
+
+def store_delivery_bars(
+    bhavcopy: pd.DataFrame,
+    trade_date: date,
+    *,
+    symbols: set[str] | None = None,
+) -> int:
     """Persist one session's delivery rows so history accumulates.
 
     Called by the scheduled job. Rows already present are skipped rather than
     updated - a settled session does not change, and re-running the job must
     be free.
+
+    `symbols` restricts the write to the stocks actually being screened. The
+    bhavcopy carries every NSE equity, around 3,500 of them, and storing the
+    ~2,900 that are not in the universe costs round trips for data nothing
+    reads.
     """
-    from sqlalchemy import and_, select
+    from sqlalchemy import select
 
     from src import db
 
@@ -649,31 +666,43 @@ def store_delivery_bars(bhavcopy: pd.DataFrame, trade_date: date) -> int:
             )
         }
 
-        rows = []
-        for _, record in equities.iterrows():
-            symbol = str(record.get("SYMBOL", "")).strip().upper()
-            if not symbol or symbol in existing:
-                continue
-            close = record.get("CLOSE_PRICE")
-            if pd.isna(close):
-                continue
-            rows.append({
-                "symbol": symbol,
-                "date": trade_date,
-                "open": _none_if_nan(record.get("OPEN_PRICE")),
-                "high": _none_if_nan(record.get("HIGH_PRICE")),
-                "low": _none_if_nan(record.get("LOW_PRICE")),
-                "close": _none_if_nan(close),
-                "volume": _none_if_nan(record.get("TTL_TRD_QNTY")),
-                "deliverable_qty": _none_if_nan(record.get("DELIV_QTY")),
-                "delivery_pct": _none_if_nan(record.get("DELIV_PER")),
-                "turnover_lacs": _none_if_nan(record.get("TURNOVER_LACS")),
-            })
+    rows = []
+    for _, record in equities.iterrows():
+        symbol = str(record.get("SYMBOL", "")).strip().upper()
+        if not symbol or symbol in existing:
+            continue
+        if symbols is not None and symbol not in symbols:
+            continue
+        close = record.get("CLOSE_PRICE")
+        if pd.isna(close):
+            continue
+        rows.append({
+            "symbol": symbol,
+            "date": trade_date,
+            "open": _none_if_nan(record.get("OPEN_PRICE")),
+            "high": _none_if_nan(record.get("HIGH_PRICE")),
+            "low": _none_if_nan(record.get("LOW_PRICE")),
+            "close": _none_if_nan(close),
+            "volume": _none_if_nan(record.get("TTL_TRD_QNTY")),
+            "deliverable_qty": _none_if_nan(record.get("DELIV_QTY")),
+            "delivery_pct": _none_if_nan(record.get("DELIV_PER")),
+            "turnover_lacs": _none_if_nan(record.get("TURNOVER_LACS")),
+        })
 
-        if rows:
-            conn.execute(db.price_bars.insert(), rows)
+    if not rows:
+        log.info("No new delivery bars to store for %s", trade_date)
+        return 0
 
-    log.info("Stored %d delivery bars for %s", len(rows), trade_date)
+    # One statement per chunk rather than one per row.
+    for start in range(0, len(rows), INSERT_CHUNK):
+        chunk = rows[start : start + INSERT_CHUNK]
+        with db.connection() as conn:
+            conn.execute(db.price_bars.insert().values(chunk))
+        log.info(
+            "  stored %d/%d delivery bars for %s",
+            min(start + INSERT_CHUNK, len(rows)), len(rows), trade_date,
+        )
+
     return len(rows)
 
 
