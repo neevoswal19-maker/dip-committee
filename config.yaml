@@ -107,6 +107,18 @@ sizing:
   # demonstrated. Bands therefore differ only in Kelly fraction and risk
   # budget, which is the honest lever, and the learner will split these priors
   # apart once real closed trades show whether conviction actually predicts.
+  #
+  # 2026-09-23: that question has now been measured directly, and the answer
+  # is no. 4,321 point-in-time observations across 150 symbols and six years,
+  # sampled only on bars where the dip screen would have looked, give the
+  # price-derived conviction an information coefficient of -0.001 at 21
+  # sessions, -0.013 at 63 and -0.006 at 126 - indistinguishable from zero,
+  # and the top-quintile-minus-bottom spread is NEGATIVE at all three. In
+  # falling markets it is actively inverted (-0.073 at 63 sessions, p 0.004).
+  # Keeping one prior across all three bands was the right call; splitting
+  # them would have been fitting noise. Run jobs/validate_conviction.py to
+  # reproduce. What conviction still legitimately does is gate entry and cap
+  # size - it is not yet shown to rank one candidate above another.
   cold_start:
     aggressive:   {p: 0.614, b: 1.96}
     balanced:     {p: 0.614, b: 1.96}

@@ -275,6 +275,77 @@ multi-stock work (500 stocks: 45s vs 37min).
 - The self-learning loop (`src/learning/`) — schema exists, no code
 - Deployment to Streamlit Cloud + Postgres
 
+## Does conviction predict returns? Measured 2026-09-23. No.
+
+This was the last open question of substance and it now has an answer, so do
+not re-open it from scratch — reproduce it with `jobs/validate_conviction.py`.
+
+**Method.** 4,321 point-in-time observations, 150 Nifty 500 symbols, six years,
+sampled every 21 sessions and *only* on bars where the dip screen would have
+looked. Every signal recomputed from bars up to the entry date. Returns are
+excess over the Nifty 500.
+
+**Result.**
+
+| signal | 21d | 63d | 126d | verdict |
+|---|---|---|---|---|
+| `dip_conviction` | -0.001 | -0.013 | -0.006 | zero |
+| `screen_score` | -0.010 | -0.013 | -0.022 | zero, slightly negative |
+| `drawdown_pct` | +0.003 | -0.004 | -0.009 | zero |
+| `rsi` | +0.013 | +0.019 | +0.010 | zero |
+| `dma_slope_pct` | +0.013 | +0.007 | -0.001 | zero |
+| `pct_vs_dma_long` | +0.012 | +0.005 | +0.033 | weak |
+| `atr_pct` | +0.038 | +0.062 | +0.081 | see below |
+
+The conviction quintile spread is **negative at all three horizons** (-0.07%,
+-0.43%, -0.71%). The highest-conviction bucket did not beat the lowest.
+
+**Three corrections were applied, and each one mattered.**
+
+1. *Multiple comparisons.* Twenty-one tests at p<0.10 produce about two false
+   positives on pure noise. Under Bonferroni only `atr_pct` at 63d and 126d
+   survived.
+2. *Cross-sectional IC.* Pooling across dates confuses "this month was good"
+   with "this signal is good". Measuring within each month and averaging the
+   71 monthly ICs is the honest version. It promoted `pct_vs_dma_long` (+0.085
+   at 126d, t +4.38, positive in 71% of months) and left conviction at +0.012.
+3. *Regime split.* `atr_pct` reads **+0.108 when the market rose and -0.053
+   when it fell**. The sign flips: that is beta, not skill. The only signal
+   that survived correction was measuring market exposure. Discount it.
+
+**The one finding worth acting on.** `pct_vs_dma_long` — distance above the
+200-DMA — has a genuine within-month IC of +0.085 at 126 sessions and does not
+flip sign in falling markets (+0.003). Among dip candidates the *shallower*
+dips outperform. `drawdown_pct` agrees by having a negative cross-sectional IC.
+This is the opposite of what "buy the deeper dip" assumes, and the conviction
+formula currently pushes both ways at once, which is part of why it nets to
+zero.
+
+**The worst finding.** In falling markets `dip_conviction` is *inverted* —
+-0.073 at 63 sessions (p 0.004) and -0.067 at 126 (p 0.015). High conviction
+picked worse stocks exactly when it mattered most.
+
+**What this does and does not license.**
+
+- It does **not** say the system is worthless. Conviction still gates entry
+  (WATCH vs BUY) and caps size. Those are threshold decisions, not ranking
+  decisions, and were not tested here.
+- It **does** say that sizing *proportionally* to conviction is currently
+  sizing proportionally to noise. `cold_start` already uses one prior for all
+  three bands for exactly this reason; keep it that way.
+- It says nothing at all about the equity, ownership and news desks, which
+  carry 75% of desk weight and **cannot be backtested** — fundamentals,
+  shareholding, insider filings and news are only available as they stand
+  today. The live `committee_runs` ledger is the only honest route: conviction
+  is recorded at every run, so check it against forward returns at the
+  30/90/180-day marks as real time passes.
+
+**scipy is unavailable on this machine.** Its compiled extensions are blocked
+by the same Windows Application Control policy that blocked psycopg2. Spearman
+and the p-values in `src/learning/attribution.py` are implemented directly on
+numpy/pandas ranks with an erf-based normal approximation. Do not reintroduce
+a scipy import.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important
