@@ -9,6 +9,7 @@ rather than Streamlit's filename-derived ones.
 
 from __future__ import annotations
 
+import secrets
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.config import dashboard_access_mode
+from src.config import dashboard_access_mode, dashboard_password
 from src.ui import theme
 
 theme.apply("Dip Committee")
@@ -61,7 +62,11 @@ def authenticated() -> bool:
         with st.form("login"):
             entered = st.text_input("Password", type="password", label_visibility="collapsed")
             if st.form_submit_button("Unlock", use_container_width=True, type="primary"):
-                if entered == password:
+                # compare_digest rather than ==, so the comparison takes the
+                # same time whatever the input. Overkill for one user, but
+                # this is the only lock on the door.
+                expected = dashboard_password() or ""
+                if entered and secrets.compare_digest(entered, expected):
                     st.session_state["authenticated"] = True
                     st.rerun()
                 else:

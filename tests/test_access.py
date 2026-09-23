@@ -188,3 +188,70 @@ class TestLibpqParameterStripping:
         assert "sslmode" not in url
         assert "application_name=dip" in url
         assert url.count("?") == 1, "the surviving parameter must start a clean query string"
+
+
+class TestLoginPathIsExecutable:
+    """The password comparison shipped with an undefined name.
+
+    A refactor of `authenticated()` removed the line that bound `password`
+    but left the comparison using it, so every login attempt raised
+    NameError. Nothing caught it because no test imports app.py - it needs a
+    Streamlit runtime - and the failure only appears when someone actually
+    types a password. These checks are static, so they need no runtime.
+    """
+
+    def _authenticated_fn(self):
+        import ast
+        import pathlib
+
+        tree = ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+        fn = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "authenticated"
+        )
+        return tree, fn
+
+    def test_no_undefined_names_in_the_login_path(self):
+        import ast
+        import builtins
+
+        tree, fn = self._authenticated_fn()
+
+        bound = {
+            node.id for node in ast.walk(fn)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        module_level = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        imported = {
+            (alias.asname or alias.name).split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        used = {
+            node.id for node in ast.walk(fn)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+
+        undefined = used - bound - module_level - imported - set(dir(builtins))
+        assert not undefined, f"authenticated() references undefined names: {undefined}"
+
+    def test_the_comparison_is_constant_time(self):
+        """== leaks length and prefix through timing; this is the only lock."""
+        import pathlib
+
+        source = pathlib.Path("app.py").read_text(encoding="utf-8")
+        assert "compare_digest" in source
+        assert "if entered == password" not in source
+
+    def test_an_empty_submission_cannot_pass(self):
+        """compare_digest("", "") is True, so the empty case needs its own guard."""
+        import pathlib
+
+        source = pathlib.Path("app.py").read_text(encoding="utf-8")
+        assert "if entered and secrets.compare_digest" in source, (
+            "an empty password must be rejected before the digest comparison"
+        )
