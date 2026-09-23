@@ -413,6 +413,55 @@ preserved, ATR absent) so the weights can be tuned but not silently inverted.
 That gap was real: the old weights survived a full rewrite without breaking a
 single one of the 272 existing tests.
 
+## Market regime filter — built 2026-09-23, defaults to `inform`
+
+`src/strategy/regime.py`. The market regime is UPTREND / MIXED / DOWNTREND /
+UNKNOWN, from Nifty 500 against its 200-DMA plus the 126-session slope of that
+average. **The definition was fixed before any result was looked at.** Don't
+tune it: there are only three downtrend phases longer than a month in twelve
+years (early 2016, early 2019, post-COVID 2020), and a threshold tuned
+against three episodes is fitted to those episodes.
+
+**Why it does not block anything by default.** The earlier "ranking fails when
+the market falls" finding labelled regimes by the market's *future* return,
+and that can't be traded. Re-measured point-in-time, using the regime on the
+entry date (14,393 dip entries, 300 symbols, 2015-26, 126-session raw return):
+
+| regime on entry | mean | median | % up | lost >20% | ranking IC |
+|---|---|---|---|---|---|
+| UPTREND | +8.5% | +1.9% | 53% | 15.1% | +0.071 |
+| MIXED | +12.5% | +6.8% | 61% | 10.5% | +0.052 |
+| DOWNTREND | **+21.3%** | **+17.5%** | **76%** | **6.5%** | -0.006 |
+
+Without 2020 the downtrend mean is still +13.3%. By episode: 2016 went well,
+2020 went very well, and early 2019 lost money (-5.5%, 40% up). Downtrend dip
+entries were the *best* in the sample, so a block would have removed the best
+trades. Three episodes is also too few to justify sizing *up*. The one thing
+the regime clearly changes is how far the ranking can be trusted: in a
+downtrend it has no information.
+
+**What it does.**
+- `regime.downtrend_action` in config: `inform` (default, measured), `reduce`
+  (scale by `reduce_factor`), `block` (BUY → WATCH, with a rejection that
+  says it was measured to cut the best entries).
+- UNKNOWN never triggers the brake, so an index outage can't cancel a position.
+  An invalid policy value falls back to `inform` with a warning.
+- The regime is recorded with every committee run, inside `sizing_json` under
+  `market_regime` (no Neon migration needed). This is the data that will
+  eventually test the regime on real trades.
+- The CMIO summary, BUY alerts, scan summary and Overview banner all show it.
+- `daily_scan` sends a `regime_change` alert only on moves into or out of
+  DOWNTREND (7 in 12 years). It's stateless: yesterday and today both come
+  from the same index history.
+- One index read per scan (`scan._run_committee_on`), not one per stock.
+
+**State on 2026-09-23: DOWNTREND**, marginally (0.3% below the 200-DMA, with
+the average down 1.1% over six months).
+
+Reproduce: `python jobs/validate_conviction.py --universe 300 --years 11
+--every 21 --dump obs.csv`. Prices are disk-cached, so a re-run takes about a
+minute.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important

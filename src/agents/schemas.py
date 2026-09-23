@@ -170,6 +170,9 @@ class CommitteeReport:
     dissent: str = ""
     blind_desks: list[str] = field(default_factory=list)
 
+    #: The broad market's regime on the run date - see strategy/regime.py.
+    market_regime: dict[str, Any] | None = None
+
     #: Filled by the CMIO from the existing sizing and exit modules.
     sizing: dict[str, Any] | None = None
     exit_doctrine: dict[str, Any] | None = None

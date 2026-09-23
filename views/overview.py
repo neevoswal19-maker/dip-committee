@@ -8,10 +8,16 @@ import streamlit as st
 
 from src import db, scan
 from src.config import load_config
+from src.strategy import regime as regime_rules
 from src.ui import theme
 
 cfg = load_config()
 db.init_db()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _market_regime() -> dict:
+    return regime_rules.current(cfg).to_dict()
 
 st.markdown("# Dip Committee")
 st.caption(
@@ -45,6 +51,18 @@ else:
     cols[3].metric("Delivery", latest["passed_delivery"] or 0)
     cols[4].metric("Last scan", freshness)
 
+    market = _market_regime()
+    label = market.get("label", "UNKNOWN")
+    regime_text = regime_rules.describe_for_humans(regime_rules.MarketRegime(
+        **{**market, "as_of": None}
+    ))
+    if label == "DOWNTREND":
+        st.warning(regime_text)
+    elif label == "UNKNOWN":
+        st.info(regime_text)
+    else:
+        st.caption(regime_text)
+
     if hours > 36:
         st.warning(
             f"The most recent scan ran {freshness}. Prices and delivery have moved on - "
@@ -59,9 +77,9 @@ else:
 
     if not candidates:
         st.info(
-            "The screen found nothing today. That is a normal outcome near a market high: "
-            "there is no rule that a dip must exist on any given day. The Screener page "
-            "shows what came closest and exactly what stopped it."
+            "The screen found nothing today. There is no rule that a dip must exist on any "
+            "given day. The Screener page shows what came closest and exactly what "
+            "stopped it."
         )
     else:
         verdicts = scan.convictions_for([c["symbol"] for c in candidates])

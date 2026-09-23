@@ -22,6 +22,7 @@ from src.agents.schemas import (
     score_to_conviction,
 )
 from src.strategy import exit as exit_rules
+from src.strategy import regime as regime_rules
 from src.strategy import sizing as sizing_rules
 
 
@@ -36,6 +37,7 @@ def decide(
     portfolio: sizing_rules.PortfolioState | None = None,
     closed_trades: list[dict[str, Any]] | None = None,
     trade_date: date | None = None,
+    market_regime: Any = None,
 ) -> CommitteeReport:
     """Weigh the desks, set conviction, and size the position."""
     report = CommitteeReport(
@@ -119,7 +121,20 @@ def decide(
         bull_bear_agree=report.bull_bear_agree,
         closed_trades=closed_trades,
     )
+    # --- Market regime. Applied after sizing so the size shown is the one
+    # the policy actually allows, and recorded either way so real trades can
+    # later test whether the regime mattered.
+    was_buy = decision.is_buy
+    decision = regime_rules.apply_policy(decision, market_regime, cfg)
+    if was_buy and not decision.is_buy and report.stance == "BUY":
+        # Conviction did not change; the market did. WATCH says exactly that.
+        report.stance = "WATCH"
+
     report.sizing = decision.to_dict()
+    if market_regime is not None:
+        report.market_regime = market_regime.to_dict()
+        # Stored inside sizing_json so no schema migration is needed on Neon.
+        report.sizing["market_regime"] = report.market_regime
 
     if decision.is_buy:
         report.exit_doctrine = exit_rules.build_doctrine(
@@ -127,6 +142,8 @@ def decide(
         ).to_dict()
 
     report.summary = _summarise(report, decision, vetoing)
+    if market_regime is not None and not report.forensics_veto:
+        report.summary += " " + regime_rules.describe_for_humans(market_regime)
     report.dissent = _dissent(report)
     return report
 

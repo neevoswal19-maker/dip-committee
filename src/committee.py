@@ -29,6 +29,7 @@ from src.agents import registry
 from src.agents.schemas import CommitteeReport, DeskReport, Verdict
 from src.config import load_config
 from src.data.provider import StockIdentity
+from src.strategy import regime as regime_rules
 from src.strategy import sizing as sizing_rules
 
 log = logging.getLogger(__name__)
@@ -43,9 +44,16 @@ def run(
     closed_trades: list[dict[str, Any]] | None = None,
     persist: bool = True,
     progress: Any = None,
+    market_regime: Any = None,
 ) -> CommitteeReport:
-    """Run all 23 bots over one stock."""
+    """Run all 23 bots over one stock.
+
+    Pass `market_regime` when running many stocks, so the index is read once
+    per scan rather than once per stock.
+    """
     cfg = cfg or load_config()
+    if market_regime is None:
+        market_regime = regime_rules.current(cfg)
     started = time.time()
     identity = StockIdentity(symbol.upper()) if isinstance(symbol, str) else symbol
 
@@ -104,6 +112,7 @@ def run(
         portfolio=portfolio,
         closed_trades=closed_trades or _closed_trades(),
         trade_date=ctx.as_of,
+        market_regime=market_regime,
     )
     report.duration_seconds = time.time() - started
 
@@ -288,6 +297,7 @@ def rebuild_report(run: dict[str, Any]) -> CommitteeReport | None:
         summary=run.get("summary") or "",
         dissent=run.get("dissent") or "",
         sizing=run.get("sizing") or {},
+        market_regime=(run.get("sizing") or {}).get("market_regime"),
         exit_doctrine=run.get("exit_doctrine") or {},
         duration_seconds=float(run.get("duration_seconds") or 0.0),
     )

@@ -160,6 +160,11 @@ def buy_candidate(report: Any, cfg: Any = None) -> str:
                 f"Staged: Rs {first['value']:,.0f} now, {len(tranches) - 1} tranche(s) to follow"
             )
 
+    market = getattr(report, "market_regime", None) or {}
+    if market.get("label"):
+        lines.append("")
+        lines.append(_regime_line(market))
+
     desks = sorted(report.desks, key=lambda d: -abs(d.score) * max(d.confidence, 0.01))
     if desks:
         lines.append("")
@@ -229,7 +234,12 @@ def ltcg_warning(symbol: str, detail: dict[str, Any], cfg: Any = None) -> str:
     return "\n".join(lines)
 
 
-def scan_summary(summary: Any, candidates: list[dict[str, Any]], cfg: Any = None) -> str:
+def scan_summary(
+    summary: Any,
+    candidates: list[dict[str, Any]],
+    cfg: Any = None,
+    market: dict[str, Any] | None = None,
+) -> str:
     """What the scan found, sent when nothing else would be."""
     cfg = cfg or load_config()
 
@@ -238,8 +248,10 @@ def scan_summary(summary: Any, candidates: list[dict[str, Any]], cfg: Any = None
         f"{summary.universe_size} scanned in {summary.duration_seconds:.0f}s",
         f"{summary.passed_dip} passed the dip screen, "
         f"{summary.passed_delivery} confirmed on delivery",
-        "",
     ]
+    if market and market.get("label"):
+        lines.append(_regime_line(market))
+    lines.append("")
 
     if candidates:
         lines.append(f"<b>{len(candidates)} candidate(s)</b>")
@@ -250,9 +262,53 @@ def scan_summary(summary: Any, candidates: list[dict[str, Any]], cfg: Any = None
                 f"  {_escape(candidate['symbol'])} - Rs {candidate['close']:,.2f}, "
                 f"{candidate['drawdown_pct']:.0f}% off high, {verdict}"
             )
-    else:
+    elif (market or {}).get("label") == "UPTREND":
         lines.append("No candidates. Normal near a market high.")
+    else:
+        lines.append("No candidates today.")
 
+    lines.extend(["", f"<i>{_escape(_disclaimer(cfg))}</i>"])
+    return "\n".join(lines)
+
+
+def _regime_line(market: dict[str, Any]) -> str:
+    label = market.get("label", "UNKNOWN")
+    pct = market.get("pct_vs_dma")
+    slope = market.get("dma_slope_pct")
+    if label == "UNKNOWN" or pct is None or slope is None:
+        return "Market regime: unknown"
+    side = "above" if pct > 0 else "below"
+    return (
+        f"Market: <b>{_escape(label)}</b> (Nifty 500 {abs(pct):.1f}% {side} its 200-DMA, "
+        f"average {slope:+.1f}% over 6 months)"
+    )
+
+
+def regime_change(previous: Any, current: Any, cfg: Any = None) -> str:
+    """The market moved into or out of a downtrend."""
+    cfg = cfg or load_config()
+    entering = current.label == "DOWNTREND"
+    lines = [
+        f"<b>Market regime: {_escape(previous.label)} -> {_escape(current.label)}</b>",
+        _escape(current.reason),
+        "",
+    ]
+    if entering:
+        lines.append(
+            "In 2015-26, dips bought in a downtrend returned +21% on average over six "
+            "months (+13% leaving out 2020), better than any other regime. But that rests on three episodes, "
+            "and one of them (early 2019) lost money. The candidate ranking told you "
+            "nothing in downtrends, so spread across candidates rather than "
+            "concentrating on the top one."
+        )
+        action = str(cfg.get("regime.downtrend_action", "inform"))
+        if action != "inform":
+            lines.append(f"Policy '{_escape(action)}' is now active on new BUYs.")
+    else:
+        lines.append(
+            "The downtrend is over. The candidate ranking has been more informative "
+            "outside downtrends, so the order of candidates means more again."
+        )
     lines.extend(["", f"<i>{_escape(_disclaimer(cfg))}</i>"])
     return "\n".join(lines)
 

@@ -148,6 +148,10 @@ def observe(
     if bench.usable and bench.value is not None:
         benchmark = bench.value
 
+    from src.strategy import regime as regime_rules
+
+    regimes = regime_rules.regime_frame(benchmark) if benchmark is not None else None
+
     observations: list[dict] = []
     longest = max(horizons)
 
@@ -209,6 +213,13 @@ def observe(
                 # Month buckets, so the cross-sectional IC has enough names to
                 # rank against each other on any given slice.
                 "period": (stamp.year, stamp.month),
+                # The market's state as it stood on the entry date, from index
+                # bars up to that date only - the tradeable version of the
+                # regime question.
+                "regime": (
+                    regime_rules.classify(None, stamp.date(), frame=regimes).label
+                    if regimes is not None else "UNKNOWN"
+                ),
                 **metrics,
             }
 
@@ -216,6 +227,9 @@ def observe(
             for horizon in horizons:
                 value = attribution.forward_return(frame, stamp.date(), horizon, benchmark=benchmark)
                 record[f"return_{horizon}"] = value
+                # Raw return as well as excess: "should I buy at all" is a
+                # question about cash versus the stock, not stock versus index.
+                record[f"raw_{horizon}"] = attribution.forward_return(frame, stamp.date(), horizon)
                 # The market's own move over the same window, kept so the
                 # results can be split by regime. A signal that only works
                 # when everything is rising has not been shown to work.
@@ -235,6 +249,8 @@ def observe(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Measure whether our signals predict")
     parser.add_argument("--universe", type=int, default=150, help="how many symbols")
+    parser.add_argument("--dump", type=str, default=None,
+                        help="write the raw observations to this CSV for further analysis")
     parser.add_argument("--offset", type=int, default=0,
                         help="skip this many symbols first - use for a holdout run")
     parser.add_argument("--years", type=float, default=6.0)
@@ -262,6 +278,9 @@ def main() -> int:
         symbols, start=start, end=end, every=args.every, horizons=horizons, cfg=cfg
     )
     print(f"{len(observations):,} point-in-time observations\n")
+    if args.dump:
+        pd.DataFrame(observations).to_csv(args.dump, index=False)
+        print(f"observations written to {args.dump}")
 
     if len(observations) < 50:
         print("Too few observations to say anything.")
@@ -320,6 +339,37 @@ def main() -> int:
             grouped = frame.groupby("b")[f"return_{horizon}"].mean()
             print(f"    {label}  top-quintile minus bottom: "
                   f"{grouped.iloc[-1] - grouped.iloc[0]:+.2f}%")
+
+    # --- Point-in-time regime: the version a filter can actually use.
+    print("")
+    print("=" * 96)
+    print("MARKET REGIME ON THE ENTRY DATE (point-in-time, no look-ahead)")
+    print("=" * 96)
+    print("  UPTREND: Nifty 500 above its 200-DMA and the DMA rising. DOWNTREND: below")
+    print("  and falling. MIXED: they disagree. Fixed before looking at any result.")
+    for horizon in horizons:
+        rows = [o for o in observations if o.get(f"raw_{horizon}") is not None]
+        if not rows:
+            continue
+        frame = pd.DataFrame(rows)
+        print(f"\n  {horizon} sessions:")
+        print(f"    {'regime':<10} {'obs':>6} {'months':>7}  {'raw mean':>9} {'raw median':>10} "
+              f"{'% up':>6}  {'excess':>7}  {'rank IC':>8}")
+        for label in ("UPTREND", "MIXED", "DOWNTREND"):
+            sub = frame[frame["regime"] == label]
+            if len(sub) < 30:
+                print(f"    {label:<10} {len(sub):>6}  too few")
+                continue
+            cs = attribution.cross_sectional_ic(
+                sub.to_dict("records"), "screen_score", horizon, min_per_period=8
+            )
+            ic_text = f"{cs.mean_ic:+.3f}" if cs else "   n/a"
+            print(
+                f"    {label:<10} {len(sub):>6} {sub['period'].nunique():>7}  "
+                f"{sub[f'raw_{horizon}'].mean():>+8.2f}% {sub[f'raw_{horizon}'].median():>+9.2f}% "
+                f"{(sub[f'raw_{horizon}'] > 0).mean():>6.0%}  "
+                f"{sub[f'return_{horizon}'].mean():>+6.2f}%  {ic_text:>8}"
+            )
 
     # --- Regime split: rising market versus falling.
     print("\n" + "=" * 96)

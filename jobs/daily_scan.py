@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import committee as committee_module
 from src import db, portfolio, scan
 from src.alerts import telegram
+from src.strategy import regime as regime_rules
 from src.config import load_config
 from src.data import nse, prices
 from src.data.provider import StockIdentity
@@ -206,6 +207,19 @@ def main() -> int:
         exits = check_holdings(cfg)
         log.info("Sent %d holding alert(s)", len(exits))
 
+        log.info("--- market regime")
+        market = regime_rules.current(cfg)
+        log.info(regime_rules.describe_for_humans(market))
+        change = regime_rules.downtrend_transition(cfg)
+        if change is not None:
+            previous, current_regime = change
+            telegram.send(
+                telegram.regime_change(previous, current_regime, cfg),
+                alert_type="regime_change",
+                dedupe_key=f"regime|{current_regime.label}|{current_regime.as_of}",
+                cfg=cfg,
+            )
+
         if args.summary and not buys and not exits:
             _, candidates = scan.latest_candidates()
             convictions = scan.convictions_for([c["symbol"] for c in candidates])
@@ -214,7 +228,7 @@ def main() -> int:
                 for c in candidates
             ]
             telegram.send(
-                telegram.scan_summary(summary, enriched, cfg),
+                telegram.scan_summary(summary, enriched, cfg, market=market.to_dict()),
                 alert_type="scan_summary",
                 dedupe_key=f"summary|{date.today().isoformat()}",
                 cfg=cfg,

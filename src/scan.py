@@ -211,12 +211,16 @@ def _run_committee_on(
     displayed as exactly that rather than silently as an endorsed one.
     """
     from src import committee as committee_module
+    from src.strategy import regime as regime_rules
+
+    market = regime_rules.current(cfg)
+    log.info(regime_rules.describe_for_humans(market))
 
     for i, candidate in enumerate(candidates, start=1):
         if progress is not None:
             progress(i, len(candidates), f"committee: {candidate.symbol}")
         try:
-            committee_module.run(candidate.symbol, cfg=cfg)
+            committee_module.run(candidate.symbol, cfg=cfg, market_regime=market)
         except Exception as exc:
             log.warning("Committee failed for %s: %s", candidate.symbol, exc)
 
