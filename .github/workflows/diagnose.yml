@@ -1,0 +1,26 @@
+name: Diagnose network
+
+# Answers one question: can a hosted runner reach NSE at all?
+# The first scheduled run hung 29 minutes on its first NSE request and was
+# killed by the job timeout, which left the cause ambiguous between a block,
+# a hang, and a bug in our own code.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8    # short on purpose - a hang should fail fast here
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Probe the data sources
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python jobs/diagnose_network.py
