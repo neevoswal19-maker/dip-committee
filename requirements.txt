@@ -1,0 +1,45 @@
+# Pinned to the versions this system was built and tested against.
+# Streamlit Cloud resolves dependencies fresh on every rebuild, so a range
+# would let an upstream release break the deployed app at a time of its
+# choosing - pandas 3.0 and yfinance 1.7 both shipped breaking changes during
+# this build.
+#
+# To upgrade: bump one line, run the suite, redeploy.
+
+# --- Core ---
+pyyaml==6.0.3
+pandas==3.0.6
+numpy==2.5.3
+scipy==1.18.1
+python-dateutil==2.9.0.post0
+
+# --- Dashboard ---
+streamlit==1.64.0
+plotly==7.1.0
+
+# --- Data sources ---
+yfinance==1.7.0
+requests==2.34.2
+curl_cffi==0.16.3      # NSE blocks plain requests at the TLS layer
+feedparser==6.0.14
+lxml==6.1.3
+beautifulsoup4==4.15.0
+
+# --- Broker file import ---
+openpyxl==3.1.5  # Groww exports order history as XLSX
+
+# --- Database ---
+SQLAlchemy==2.0.54
+pg8000==1.31.5         # Postgres driver, pure Python - psycopg2's compiled
+                       # extension is blocked by Application Control on some
+                       # Windows machines, including the dev one
+
+# --- LLM committee ---
+anthropic==1.8.0
+pydantic==2.13.5
+
+# --- Alerts ---
+httpx==0.28.1
+
+# --- Dev / test ---
+pytest==9.1.1

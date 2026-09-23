@@ -1,0 +1,236 @@
+# Handoff
+
+For a fresh session picking this project up. Written so nothing here has to be
+re-derived.
+
+Last updated: 2026-09-23 (committee built)
+
+---
+
+## What this is
+
+A buy-the-dip research dashboard for Indian equities, for delivery-based
+long-term investing. Scans the Nifty 500 for stocks that have fallen inside an
+ongoing uptrend, confirms someone is accumulating, sizes the position, and
+defines the exit before entry.
+
+**It is a research tool, not investment advice, and the owner is not a
+SEBI-registered adviser.** Every verdict screen and alert carries that line.
+Keep it that way.
+
+Run it: `.venv/Scripts/python.exe -m streamlit run app.py`
+Test it: `.venv/Scripts/python.exe -m pytest tests/ -q` (208 passing)
+
+Windows, Python 3.12, venv at `.venv`. Machine has 7.7 GB RAM and no
+dedicated GPU — **a local LLM is not viable here**, don't propose one.
+
+---
+
+## Decisions already made, and why
+
+These were settled with the owner. Don't relitigate them without a reason.
+
+| Decision | Why |
+|---|---|
+| Rule-based committee, no LLM | Owner chose free. Nine of 23 bots are pure arithmetic anyway; rules are backtestable and the learning loop wants determinism. A seam exists to add LLM bodies later. |
+| FIFO lot accounting | Indian tax law requires it for listed equity. Not a modelling preference. |
+| Transactions are the source of truth | Staged entries (3 tranches) and trims mean a position is never one price on one date. |
+| Charges folded into cost basis | The sizer estimates win rate and payoff from the trade ledger; gross figures would inflate position sizes over time. |
+| Streamlit Cloud + GitHub Actions + Telegram | Owner chose free hosting. Code public, data and keys private. |
+| Conviction drives the Kelly fraction, not the odds | All three bands share one prior until real trades prove conviction predicts. |
+
+## Numbers that were measured, not guessed
+
+Don't re-estimate these; they came from real data.
+
+- **Evidence pack**: ~3,400 tokens per stock (not the 20k first assumed).
+- **API cost if ever added**: all-Opus ≈ ₹97/deep dive, all-Sonnet ≈ ₹39,
+  hybrid (10 bots as rules + 13 on Haiku) ≈ ₹13. Caching saves 21%, not more —
+  the pack is small enough that output tokens dominate.
+- **Delivery ratio distribution** across 60 Nifty 500 stocks: p25 0.99,
+  p50 1.02, p75 1.07, p90 1.11, max 1.14. The threshold is 1.05 (~p65) because
+  1.10 sat at p90 and passed 3% of stocks, which after a ~5% dip screen would
+  never fire.
+- **Backtest**, walk-forward, no look-ahead, vs Nifty 500 buy-and-hold:
+
+  | Window | Strategy | Index | Strategy DD | Index DD |
+  |---|---|---|---|---|
+  | 2020-2026 | 21.8% | 16.3% | -14.5% | -18.8% |
+  | 2017-2023 | 18.4% | 14.1% | -27.8% | -38.3% |
+  | 2018-2021 | 9.3% | 10.7% | -33.8% | -38.3% |
+
+- **The trend filter is the strategy.** A/B over 2018-2021: with it +9.0% CAGR
+  and -31.6% drawdown; without it **-3.6% CAGR and -50.9% drawdown**.
+- **The screen score does not predict outcomes.** Bucketing 114 backtest trades
+  by it gave the top bucket a 51% win rate against the bottom's 67%. It is a
+  reading order, not a quality ranking. Conviction is meant to be the
+  predictive number — verifying that is an open task.
+- **Cold-start sizing priors**: p = 0.614, b = 1.96, from the 2017-2023 window.
+  All three conviction bands share them deliberately.
+
+## Bugs already found and fixed — don't reintroduce
+
+- **Falling-knife leak.** The trend filter originally checked the 200 DMA slope
+  only when price was *below* the average, so a crashed stock that bounced
+  above its own falling average passed. The slope condition is now
+  unconditional, in both `screener.evaluate_dip` and `backtest.dip_signal_at` —
+  **these two must stay identical or the backtest stops testing the live rule.**
+- **Benchmark misalignment.** `prices.get_index_history` always ends at today,
+  so asking for "6 years" on a window closing in 2023 fetched 2020-2026 and
+  sliced it, reporting a COVID-recovery CAGR as the benchmark. Now measured
+  from today and discarded if it covers <90% of the window.
+- **Vacuous quality-gate pass.** A delisted symbol with every metric `None`
+  skipped every check and "passed". Now needs ≥3 of 5 gate metrics.
+- **NSE date filters silently return empty.** `corporates-pit` ignores
+  `from_date`/`to_date` and returns nothing. Fetch unfiltered, filter in pandas.
+- **`enableCORS=false`** was left in the Streamlit config, accepting any
+  origin. Removed.
+- **The Overview presented the screen score as a verdict.** The committee was
+  built but never wired into the scan, so the dashboard's most prominent number
+  was `screen_score` - the one measured as *not* predicting outcomes - shown as
+  "score 51/100" under a tagline reading "sized by conviction". Worse, for the
+  live candidate the screen score (51) and the committee's conviction (51)
+  coincided exactly. `scan.run_scan` now runs the committee on the top N
+  survivors, `scan.convictions_for()` fetches the verdicts, and the Overview
+  leads with stance and conviction while the screen score is demoted to a
+  labelled annotation. A candidate with no verdict is shown as NOT ASSESSED
+  rather than defaulting to neutral.
+
+  **The general rule this came from:** whatever the dashboard shows largest is
+  read as the recommendation, whatever the caption says. Do not display a
+  number that is known not to predict in the position a verdict belongs.
+- **Routine compliance filings were scored as governance crises.** The event
+  taxonomy matched bare `sebi`, so "Certificate under SEBI (Depositories
+  and Participants) Regulations, 2018" - filed quarterly by every listed
+  company - classified as a governance event at materiality 1.0. Red-flag
+  counts ran to 12-18 per stock and the news desk was dragged negative across
+  the whole universe. Governance patterns now require an adverse *action*
+  (order, penalty, show cause, investigation, resignation), `results` no longer
+  matches a bare "quarter", and an auditor *change* is separated from an
+  auditor *resignation*. After the fix: flags 12-18 → 0-4, news desk -1.30 →
+  -0.57, conviction +2 to +4. Regression tests in `TestEventTaxonomy`.
+- **Red flags were double-counted.** The Bear Case Analyst re-emits other bots'
+  flags with the source prefixed, so each arrived twice. The count feeds the
+  sizing band's red-flag test, so a duplicate could shrink a position for no
+  reason. `cmio._dedupe_flags` matches on the text after the source prefix.
+
+---
+
+## Architecture
+
+```
+app.py                  Router + password gate (st.navigation)
+views/                  overview, screener, deep_dive, committee, portfolio, backtest_page
+src/
+  config.py             Loads config.yaml; secrets from env, never the file
+  indicators.py         RSI/ATR/DMA/drawdown/delivery — Wilder smoothing, pure functions
+  screener.py           Stages 1-3
+  scan.py               Runs a scan, persists it
+  portfolio.py          FIFO lots, derived position state, realised gains
+  charges.py            Indian delivery-equity cost model
+  db.py                 SQLAlchemy Core schema
+  data/                 provider.py (DataResult contract), nse.py, prices.py,
+                        fundamentals.py, cache.py
+  importers/groww.py    Broker file reader
+  strategy/             sizing.py, exit.py, backtest.py
+  agents/               The committee: schemas, base (the seam), evidence,
+                        lexicon, the 5 desk files, leads, cmio, registry
+  committee.py          Orchestrator: three waves, persists every verdict
+  ui/theme.py           Styling + Indian number formatting
+```
+
+**Two contracts hold the system together:**
+
+`DataResult` (`src/data/provider.py`) wraps every fetch so "we could not get
+this" travels as data, not an exception. `status` distinguishes OK / STALE /
+PARTIAL / UNAVAILABLE / NOT_APPLICABLE. The difference between "there were no
+insider trades" and "NSE was down" changes a verdict, so never collapse them.
+
+`config.yaml` holds every threshold with a comment explaining it. Change
+numbers there, not in code.
+
+## Data sources — what works and what doesn't
+
+NSE blocks plain `requests` at the TLS layer (403). `curl_cffi` impersonating
+Chrome gets through, and the session must load the homepage for cookies first.
+All of this is handled in `src/data/nse.py` — use `nse.get_session()`.
+
+Working: index constituents, bhavcopy (incl. `DELIV_QTY`/`DELIV_PER`),
+`corporates-pit` (insider), shareholding pattern, corporate announcements,
+bulk/block deal CSVs, F&O ban list, equity master.
+
+**Not reachable**: NSE short-selling (503) and the ASM/GSM surveillance lists.
+Bots depending on them must report `data_available: false`. Don't fake it.
+
+Yahoo Finance supplies long price history and fundamentals.
+`get_price_history_batch` is 49× faster than per-symbol — always use it for
+multi-stock work (500 stocks: 45s vs 37min).
+
+---
+
+## State of play
+
+**Done and tested**
+- Data layer, caching, rate limiting
+- Indicators (checked against Wilder's published series)
+- Three-stage screener
+- Position sizing: conviction-weighted fractional Kelly + ATR overlay
+- Exit doctrine incl. per-lot LTCG tracking
+- Walk-forward backtest with A/B on the trend filter
+- Transaction ledger with FIFO, charges, Groww import
+- Dashboard: five pages, dark theme, live
+
+- **The 23-bot committee** (`src/agents/`, `src/committee.py`). Rule-based,
+  runs in ~9 seconds, costs nothing. `Analyst` ABC splits `gather` (arithmetic,
+  permanent) from `judge` (the seam). Adding an LLM later means subclassing one
+  bot and overriding `judge` - no other file changes.
+
+**Committee design points worth not breaking**
+- A blind bot contributes **zero weight**, not a zero score. `Verdict.weight`
+  returns 0 when `data_available` is False, so a desk with two working bots is
+  weighted on those two rather than diluted by two neutral non-votes.
+- `ctx.reachable()` gates whether a bot runs; `ctx.has()` asks whether there
+  are rows. The distinction matters: "no insider disclosures were filed" is a
+  finding, "NSE was unreachable" is not. Gating on `has()` silenced the insider
+  bot's correct handling of an empty-but-successful fetch.
+- The Research Validation Analyst is the one bot that reports at zero coverage.
+  Auditing the absence of evidence is its function.
+- Bull and Bear each see only evidence supporting their own side, so they
+  cannot converge. A test asserts they land on opposite signs.
+- The CMIO does not re-derive sizing. It hands conviction to
+  `sizing.size_position` and `exit.build_doctrine`, so there is one
+  implementation of how much to buy.
+
+**Not started**
+- Telegram alerts (`src/alerts/telegram.py`)
+- Scheduled daily scan (`.github/workflows/`, `jobs/`)
+- The self-learning loop (`src/learning/`) — schema exists, no code
+- Deployment to Streamlit Cloud + Postgres
+
+## Open questions
+
+- **Does conviction predict returns?** Still open, and now the most important
+  question in the project. The screen score does not predict. The committee is
+  deterministic precisely so this can be measured: run it across historical
+  dates, correlate conviction against forward returns, report the information
+  coefficient. Historical ownership and news coverage is thin, so a backtest
+  can only validate the price/delivery/fundamental bots - say so rather than
+  implying full coverage. If conviction fails the same way the screen score
+  did, the desk weights need rethinking before any of this is trusted.
+- **The Groww importer is unverified against a real file.** Built against a
+  synthetic one with alias matching and a manual column mapper. Ask the owner
+  for an actual export.
+- **Historical committee backtesting is limited.** Shareholding and insider
+  data aren't available point-in-time, so a historical run can only validate
+  the price/delivery/fundamental bots. Say so rather than implying full coverage.
+
+## Working style the owner expects
+
+- Numbers get measured, not assumed — and when an earlier estimate was wrong,
+  say so plainly and correct it.
+- Thresholds are calibrated against observed distributions, and the percentiles
+  go in the config comment.
+- Caveats are stated up front, not buried. A backtest that hides survivorship
+  bias is worse than none.
+- Design skills in the owner's CLAUDE.md apply to frontend work — see the table
+  there for which skill covers what.

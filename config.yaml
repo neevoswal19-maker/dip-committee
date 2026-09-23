@@ -1,0 +1,311 @@
+# =============================================================================
+# Stock Screener - central configuration
+# Every threshold, weight and constant the system uses lives here.
+# Change a number here rather than hunting through the code.
+# =============================================================================
+
+app:
+  name: "Dip Committee"
+  timezone: "Asia/Kolkata"
+  currency_symbol: "Rs"
+
+# -----------------------------------------------------------------------------
+# Universe: which stocks get scanned
+# -----------------------------------------------------------------------------
+universe:
+  index: "NIFTY 500"
+  refresh_days: 7
+  exclude_symbols: []
+  exclude_sectors: []
+
+# -----------------------------------------------------------------------------
+# STAGE 1 - Quality gate. "Would I want to own this at any price?"
+# -----------------------------------------------------------------------------
+quality_gate:
+  min_market_cap_cr: 5000          # Rs crore
+  min_price: 50.0                  # avoid penny stocks
+  min_roe_pct: 12.0
+  max_debt_to_equity: 1.5          # financials exempt, see debt_exempt_sectors
+  min_revenue_cagr_3y_pct: 0.0
+  min_profitable_years_of_4: 3
+  # A symbol with almost no fundamental data (delisted, renamed, demerged)
+  # must fail rather than pass by having been tested against nothing.
+  min_known_metrics: 3
+  max_promoter_pledge_pct: 20.0
+  exclude_surveillance: true       # NSE ASM / GSM lists
+  debt_exempt_sectors:             # D/E is meaningless for lenders
+    - "Financial Services"
+    - "Banking"
+    - "NBFC"
+    - "Insurance"
+
+# -----------------------------------------------------------------------------
+# STAGE 2 - Dip detection. "Is this a dip or a downtrend?"
+# The 200-DMA trend filter is the non-negotiable part: every credible
+# buy-the-dip backtest pairs the oversold trigger with a trend filter.
+# -----------------------------------------------------------------------------
+dip:
+  drawdown_min_pct: 10.0           # shallower is not worth acting on
+  drawdown_max_pct: 35.0           # deeper usually means the thesis broke
+  rsi_period: 14
+  rsi_max: 40.0
+  dma_long: 200
+  dma_short: 50
+  dma_tolerance_below_pct: 5.0     # how far below 200 DMA is still acceptable
+  dma_slope_lookback_days: 126     # ~6 months of sessions
+  dma_slope_min_pct: 0.0           # slope must be at least flat
+  support_proximity_pct: 5.0       # within 5% of 200 DMA or a prior swing low
+  swing_low_lookback_days: 252
+  reject_new_52w_low: true
+  atr_period: 14
+
+# -----------------------------------------------------------------------------
+# STAGE 3 - Delivery confirmation. The India-specific edge.
+# Price falling while settled (delivery) ownership rises means long-term
+# holders are absorbing the selling rather than traders churning intraday.
+# -----------------------------------------------------------------------------
+delivery:
+  avg_window_days: 20
+  # Calibrated against the measured distribution across 60 Nifty 500 stocks,
+  # not chosen by intuition. The 10-session mean down-day delivery ratio runs:
+  #   p25 0.99   p50 1.02   p75 1.07   p90 1.11   max 1.14
+  # An original 1.10x threshold sat at the 90th percentile and, combined with a
+  # 3-session persistence rule, passed 3% of stocks. Applied after a dip screen
+  # that itself passes ~5%, the joint filter would almost never fire.
+  #
+  # 1.05x is roughly the 65th percentile: real evidence of absorption without
+  # demanding a once-a-year reading. The strength of the signal above this
+  # floor is rewarded in the score instead of gated here, which is the right
+  # division - a gate should exclude the unconvincing, not everything but the
+  # exceptional.
+  down_day_delivery_ratio_min: 1.05
+  min_delivery_pct: 40.0
+  persistence_sessions_required: 2   # guards against a single block deal
+  persistence_lookback: 10
+  min_avg_traded_value_cr: 5.0       # liquidity floor, Rs crore/day
+
+ownership:
+  insider_lookback_days: 90
+  insider_net_sell_alarm_pct: 1.0
+  institutional_exit_alarm_pct: 2.0
+
+# -----------------------------------------------------------------------------
+# POSITION SIZING - conviction-weighted fractional Kelly with an ATR overlay.
+# Final size = min(Kelly rupees, ATR rupees), then portfolio constraints.
+# -----------------------------------------------------------------------------
+sizing:
+  default_capital: 500000.0
+
+  min_trades_for_live_estimate: 20
+  # Measured from the 2017-2023 backtest (114 trades, a window that includes
+  # the 2018-19 correction and the COVID crash rather than only the bull run).
+  #
+  # All three bands carry the SAME prior on purpose. Bucketing those trades by
+  # screen score gave the top bucket a 51% win rate against 67% for the bottom
+  # - the ranking did not predict outcomes at all. Handing the aggressive band
+  # better odds on that evidence would be inventing an edge we have not
+  # demonstrated. Bands therefore differ only in Kelly fraction and risk
+  # budget, which is the honest lever, and the learner will split these priors
+  # apart once real closed trades show whether conviction actually predicts.
+  cold_start:
+    aggressive:   {p: 0.614, b: 1.96}
+    balanced:     {p: 0.614, b: 1.96}
+    conservative: {p: 0.614, b: 1.96}
+
+  # Conviction picks the Kelly fraction. Full Kelly is never used: half Kelly
+  # gives up ~25% of theoretical growth to halve worst-case drawdown, the
+  # right trade when p is estimated from dozens of trades rather than known.
+  bands:
+    aggressive:
+      min_conviction: 80
+      kelly_fraction: 0.50
+      risk_per_position_pct: 2.50
+      max_portfolio_pct: 18.0
+      require_no_red_flags: true
+      require_bull_bear_agreement: true
+    balanced:
+      min_conviction: 60
+      kelly_fraction: 0.25
+      risk_per_position_pct: 1.50
+      max_portfolio_pct: 12.0
+      require_no_red_flags: false
+      require_bull_bear_agreement: false
+    conservative:
+      min_conviction: 45
+      kelly_fraction: 0.125
+      risk_per_position_pct: 0.75
+      max_portfolio_pct: 6.0
+      min_win_probability: 0.55      # uncertain, but odds must still favour us
+      require_no_red_flags: false
+      require_bull_bear_agreement: false
+    # Below conservative.min_conviction, or forensic veto, or kelly <= 0: NO BUY
+
+  atr_stop_multiplier: 2.5           # shares = (capital * risk%) / (ATR * this)
+
+  constraints:
+    max_positions: 15
+    max_sector_pct: 25.0
+    max_portfolio_heat_pct: 6.0      # sum of open risk across all positions
+    min_position_value: 5000.0       # below this, brokerage eats the edge
+
+  staged_entry:
+    enabled: true
+    tranches:
+      - {pct: 50, trigger: "signal"}
+      - {pct: 25, trigger: "drop_pct", value: 7.0}
+      - {pct: 25, trigger: "close_above_dma", value: 50}
+
+# -----------------------------------------------------------------------------
+# TRANSACTION COSTS - Indian delivery equity.
+# These rates change with budgets and broker pricing. They live here so they
+# can be updated in one place; the trade form prefills from them and you
+# overwrite with the actual contract note figures.
+#
+# Two asymmetries that are easy to get wrong: stamp duty is charged on BUYS
+# only, and the DP charge on SELLS only. GST applies to the service fees
+# (brokerage, exchange, SEBI) but never to STT or stamp duty - those are
+# taxes in their own right and are not taxed again.
+# -----------------------------------------------------------------------------
+charges:
+  default_broker: "groww"
+
+  stt_pct: 0.1             # securities transaction tax, both sides, delivery
+  exchange_txn_pct: 0.00297  # NSE transaction charge on turnover
+  sebi_turnover_pct: 0.0001  # Rs 10 per crore
+  stamp_duty_pct: 0.015    # BUY side only
+  gst_pct: 18.0            # on brokerage + exchange + SEBI only
+  dp_charge: 20.0          # SELL side only, per scrip per day
+
+  brokers:
+    groww:
+      # Delivery: the lower of Rs 20 or 0.1% of turnover, per order
+      delivery_brokerage_pct: 0.1
+      delivery_brokerage_max: 20.0
+      dp_charge: 20.0
+    zerodha:
+      delivery_brokerage_pct: 0.0   # zero brokerage on delivery
+      delivery_brokerage_max: 0.0
+      dp_charge: 15.34
+    upstox:
+      delivery_brokerage_pct: 0.1
+      delivery_brokerage_max: 20.0
+      dp_charge: 18.5
+    manual:
+      delivery_brokerage_pct: 0.0
+      delivery_brokerage_max: 0.0
+      dp_charge: 0.0
+
+# -----------------------------------------------------------------------------
+# EXIT DOCTRINE - written at buy time, re-checked every day
+# -----------------------------------------------------------------------------
+exit:
+  staged_profit_taking:
+    - {gain_pct: 25.0, trim_pct: 25.0}
+    - {gain_pct: 50.0, trim_pct: 25.0}
+  trailing_stop:
+    activate_after_gain_pct: 30.0
+    trail_pct: 20.0                  # wide on purpose for long-term positions
+  hard_stop_pct: -25.0               # forces re-review, not an auto-sale
+  valuation_exit:
+    pe_vs_5y_median_sd: 1.0
+    require_growth_deceleration: true
+  thesis_break:
+    institutional_exit_quarters: 2
+  tax:
+    ltcg_days: 366                   # >12 months for long-term treatment
+    stcg_rate_pct: 20.0
+    ltcg_rate_pct: 12.5
+    ltcg_exemption: 125000.0         # Rs 1.25 lakh per financial year
+    warn_days_before_ltcg: 45
+
+# -----------------------------------------------------------------------------
+# CLAUDE / LLM
+# -----------------------------------------------------------------------------
+llm:
+  models:
+    analyst: "claude-opus-5"         # the 17 desk analysts
+    lead: "claude-opus-5"            # the 5 desk heads
+    cmio: "claude-opus-5"            # final verdict
+    learner: "claude-opus-5"         # post-mortem writer
+  max_tokens: 8000
+  thinking: "adaptive"
+  effort: "high"
+  enable_prompt_cache: true
+  max_concurrent_analysts: 8
+  cost_ceiling_per_run_usd: 3.00     # abort a run projected to exceed this
+  enable_server_side_fallback: true
+
+# -----------------------------------------------------------------------------
+# COMMITTEE WEIGHTS - starting values. The learner tunes these from measured
+# per-bot information coefficient once 30+ trades have closed.
+# -----------------------------------------------------------------------------
+committee:
+  desk_weights:
+    news: 0.15
+    equity: 0.30
+    macro: 0.10
+    ownership: 0.30
+    review: 0.15
+  forensics_veto: true               # forensics can kill any candidate
+  min_conviction_to_alert: 60
+
+# -----------------------------------------------------------------------------
+# SELF-LEARNING - auto-apply with guardrails
+# -----------------------------------------------------------------------------
+learning:
+  auto_apply: true
+  min_closed_trades: 30              # nothing moves before this
+  max_weight_step_pct: 20.0          # no weight moves >20% of its value at once
+  shrinkage: 0.70                    # pull toward prior; 1.0 = never change
+  out_of_sample_fraction: 0.30       # held-out slice a change must also improve
+  checkpoint_days: [30, 90, 180, 365]
+  ic_method: "spearman"
+  min_ic_to_keep: -0.05
+  # Weights are dials; thresholds change what the strategy fundamentally is,
+  # so threshold changes stay proposal-only and need a human click.
+  allow_threshold_auto_apply: false
+  max_lessons_in_prompt: 25
+
+# -----------------------------------------------------------------------------
+# DATA SOURCES
+# -----------------------------------------------------------------------------
+data:
+  cache_dir: "data/cache"
+  cache_ttl_hours:
+    prices: 12
+    fundamentals: 168                # weekly
+    delivery: 12
+    shareholding: 720                # monthly
+    insider: 24
+    news: 6
+    universe: 168
+  rate_limit:
+    nse_requests_per_minute: 20
+    min_interval_seconds: 0.6
+    max_retries: 3
+    backoff_base_seconds: 2.0
+  history_years: 6
+  news_lookback_days: 30
+  max_news_items: 40
+
+database:
+  local_url: "sqlite:///data/screener.db"
+
+# -----------------------------------------------------------------------------
+# ALERTS
+# -----------------------------------------------------------------------------
+alerts:
+  enabled: true
+  channel: "telegram"
+  send_on:
+    new_buy_candidate: true
+    exit_signal: true
+    ltcg_deadline: true
+    learning_change: true
+    scan_failure: true
+  max_candidates_per_alert: 5
+  disclaimer: "Research output, not investment advice. Not a SEBI-registered adviser."
+
+scan:
+  committee_top_n: 5                 # top N candidates go to the full committee
+  run_hour_ist: 19
