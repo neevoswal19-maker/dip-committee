@@ -3,7 +3,7 @@
 For a fresh session picking this project up. Written so nothing here has to be
 re-derived.
 
-Last updated: 2026-09-23 (deployment layer built, not yet deployed)
+Last updated: 2026-09-23 (deployed and running)
 
 ---
 
@@ -121,6 +121,24 @@ Don't re-estimate these; they came from real data.
   (market holiday, or not yet published) as a transient failure: twelve wasted
   seconds and ERROR lines for something working correctly. `cache.NotFound` now
   short-circuits the retry loop.
+- **pg8000 sends one round trip per row, and it looks exactly like a hang.**
+  The first scheduled run was killed by the job timeout after 29 minutes
+  stuck on its first step. The obvious theory - NSE blocking datacenter IPs -
+  was wrong: `jobs/diagnose_network.py` showed the GitHub runner fetching the
+  bhavcopy in 0.4s. The cost was the *write*. pg8000 has no fast executemany,
+  so `insert(), [list of dicts]` costs a round trip per row, and the runner
+  (Dulles) is ~250ms from Neon (Singapore). Writing ~3,500 delivery rows was
+  fifteen minutes of silence.
+
+  **Never pass a list of dicts to `insert()` in this codebase.** Use
+  `insert().values(chunk)` so it becomes one statement. Applied in
+  `nse.store_delivery_bars`, `committee.persist_report` and `scan.run_scan`.
+  Delivery is also restricted to the screening universe - the bhavcopy holds
+  every NSE equity and ~2,900 of them are rows nothing reads.
+
+  `jobs/diagnose_network.py` exists for exactly this class of problem: it
+  probes DNS, TCP, NSE, Yahoo and the database with hard timeouts and says
+  which one is slow. Run it before theorising.
 - **Streamlit Cloud defaults to Python 3.14; this project needs 3.12.**
   The first deploy crashed with a TypeError inside
   `metadata.create_all()`. Every pin here was tested on 3.12, and pg8000
@@ -288,10 +306,32 @@ multi-stock work (500 stocks: 45s vs 37min).
 
 ---
 
-## Deploying
+## Deployed and running
 
-Everything code-side is done and committed. What remains needs the owner's
-accounts, in this order:
+Live as of 2026-09-23. All of it on free tiers.
+
+| Piece | Where |
+|---|---|
+| Repo | github.com/neevoswal19-maker/dip-committee (public) |
+| Database | Neon Postgres, ap-southeast-1, pooled endpoint |
+| Dashboard | Streamlit Community Cloud, **Python 3.12** |
+| Scheduled scan | GitHub Actions, 19:00 IST weekdays |
+| Alerts | Telegram @cmiostock_bot |
+
+Verified end to end: a real Actions run scanned 120 stocks in 320s, wrote to
+Neon, and delivered a Telegram summary. Exit 0.
+
+**A full 500-stock run takes 15-20 minutes on a runner**, most of it the
+20-requests-per-minute limiter in `cache.py`. The job timeout is 30 minutes,
+so the headroom is thinner than it looks. If the scan ever starts timing out,
+raise `timeout-minutes` before touching the rate limit - the limiter is what
+keeps NSE serving us.
+
+Secrets live in four places and must be kept in step: `.env` (local,
+gitignored), `.streamlit/secrets.toml` (local, gitignored, TOML shape),
+GitHub repository secrets, and Streamlit's Advanced settings.
+
+### The original deployment sequence, for reference
 
 1. **Push** - create a public GitHub repo, `git remote add origin ...`,
    `git push -u origin main`. One commit exists already.
