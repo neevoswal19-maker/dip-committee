@@ -329,3 +329,60 @@ def trading_days_between(history: pd.DataFrame, start: datetime, end: datetime) 
         return 0
     mask = (history.index >= pd.Timestamp(start)) & (history.index <= pd.Timestamp(end))
     return int(mask.sum())
+
+
+# --- The price at a moment -------------------------------------------------------
+
+
+def _minute_bars(yahoo_symbol: str) -> pd.DataFrame | None:
+    """The last seven days of one-minute bars, the most Yahoo keeps."""
+    import yfinance as yf
+
+    frame = yf.Ticker(yahoo_symbol).history(period="7d", interval="1m", auto_adjust=False)
+    return frame if frame is not None and not frame.empty else None
+
+
+def _latest_quote(yahoo_symbol: str) -> float | None:
+    import yfinance as yf
+
+    value = getattr(yf.Ticker(yahoo_symbol).fast_info, "last_price", None)
+    return float(value) if value else None
+
+
+def price_at(stock: StockIdentity | str, when: datetime) -> tuple[float, str] | None:
+    """The last traded price at or before `when` (IST, naive), and how it was found.
+
+    Used to price a purchase reported by message, where the owner gives the
+    quantity but not the fill. The minute bar at the moment the message was
+    sent is the closest estimate available after the fact; a message sent in
+    the evening gets that day's last trade, a weekend message Friday's.
+    Falls back to the live quote, uncached, when no minute bars come back.
+    Returns None when neither source answers - the caller must then ask for
+    the price rather than invent one.
+    """
+    identity = StockIdentity(stock) if isinstance(stock, str) else stock
+    when_utc = pd.Timestamp(when - timedelta(hours=5, minutes=30), tz="UTC")
+
+    try:
+        bars = _minute_bars(identity.yahoo)
+    except Exception as exc:
+        log.info("Minute bars unavailable for %s: %s", identity.yahoo, exc)
+        bars = None
+
+    if bars is not None:
+        index = bars.index
+        index = index.tz_localize("UTC") if index.tz is None else index.tz_convert("UTC")
+        closes = pd.Series(bars["Close"].to_numpy(), index=index).dropna()
+        closes = closes[closes.index <= when_utc]
+        if not closes.empty and (when_utc - closes.index[-1]) <= pd.Timedelta(days=4):
+            stamp = (closes.index[-1] + pd.Timedelta(hours=5, minutes=30)).tz_localize(None)
+            return round(float(closes.iloc[-1]), 2), f"last trade at {stamp:%d %b %H:%M}"
+
+    try:
+        quote = _latest_quote(identity.yahoo)
+    except Exception as exc:
+        log.info("Quote unavailable for %s: %s", identity.yahoo, exc)
+        quote = None
+    if quote:
+        return round(quote, 2), "latest quote"
+    return None

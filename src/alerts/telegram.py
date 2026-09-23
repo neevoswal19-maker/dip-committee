@@ -53,8 +53,12 @@ def send(
     symbol: str | None = None,
     dedupe_key: str | None = None,
     cfg: Any = None,
+    reply_to: int | None = None,
 ) -> bool:
     """Send one message, recording the attempt.
+
+    `reply_to` threads the message under one of the owner's, so a
+    confirmation sits directly beneath the purchase it confirms.
 
     Returns True only when Telegram accepted it. A duplicate returns False
     without sending, which is a success from the caller's point of view - the
@@ -87,25 +91,31 @@ def send(
 
     text = body if len(body) <= MAX_LENGTH else body[: MAX_LENGTH - 20] + "\n... (truncated)"
 
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_to is not None:
+        payload["reply_parameters"] = {
+            "message_id": int(reply_to),
+            "allow_sending_without_reply": True,
+        }
+
     try:
-        response = httpx.post(
-            API.format(token=token),
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=20.0,
-        )
+        response = httpx.post(API.format(token=token), json=payload, timeout=20.0)
         response.raise_for_status()
     except Exception as exc:
-        log.error("Telegram send failed for %s: %s", key, exc)
+        # httpx puts the request URL in its error text, and the token is in the
+        # URL. Redact before it reaches a log or the database.
+        detail = str(exc).replace(token, "<token>")
+        log.error("Telegram send failed for %s: %s", key, detail)
         with db.connection() as conn:
             conn.execute(
                 db.alerts_sent.update()
                 .where(db.alerts_sent.c.dedupe_key == key)
-                .values(error=str(exc)[:500])
+                .values(error=detail[:500])
             )
         return False
 

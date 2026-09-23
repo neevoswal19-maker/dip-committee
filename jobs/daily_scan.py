@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import committee as committee_module
 from src import db, portfolio, scan
-from src.alerts import telegram
+from src.alerts import telegram, telegram_inbox
 from src.strategy import regime as regime_rules
 from src.config import load_config
 from src.data import nse, prices
@@ -202,6 +202,11 @@ def main() -> int:
         log.info("--- alerting on BUY verdicts")
         buys = alert_on_buys(cfg)
         log.info("Sent %d buy alert(s): %s", len(buys), buys or "none")
+
+        # Trades reported by message since the last run, so the exit rules
+        # below see what is actually held.
+        log.info("--- Telegram inbox")
+        telegram_inbox.process_pending(cfg)
 
         log.info("--- checking holdings")
         exits = check_holdings(cfg)

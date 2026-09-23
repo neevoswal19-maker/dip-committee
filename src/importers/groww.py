@@ -100,6 +100,8 @@ class ImportRow:
     exchange: str = "NSE"
     problems: list[str] = field(default_factory=list)
     duplicate: bool = False
+    #: A trade recorded from Telegram that this row is the real fill for.
+    replaces_transaction_id: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -116,7 +118,8 @@ class ImportRow:
             "Charges": self.charges,
             "Status": (
                 "already imported" if self.duplicate
-                else ("ready" if self.ok else "; ".join(self.problems)[:60])
+                else ("replaces Telegram entry" if self.ok and self.replaces_transaction_id
+                      else ("ready" if self.ok else "; ".join(self.problems)[:60]))
             ),
         }
 
@@ -139,6 +142,10 @@ class ImportPreview:
     @property
     def problems(self) -> list[ImportRow]:
         return [r for r in self.rows if r.problems and not r.duplicate]
+
+    @property
+    def replacements(self) -> list[ImportRow]:
+        return [r for r in self.rows if r.ok and r.replaces_transaction_id]
 
     @property
     def unresolved_names(self) -> list[str]:
@@ -395,6 +402,43 @@ def existing_order_ids(broker: str) -> set[str]:
     return {r.order_id for r in rows if r.order_id}
 
 
+def telegram_entries() -> list[dict[str, Any]]:
+    """Trades recorded from Telegram, still carrying an estimated price."""
+    from sqlalchemy import select
+
+    with db.connection() as conn:
+        rows = conn.execute(
+            select(
+                db.transactions.c.id, db.transactions.c.symbol, db.transactions.c.side,
+                db.transactions.c.trade_date, db.transactions.c.quantity,
+            ).where(db.transactions.c.source == "telegram")
+        ).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def _match_telegram(row: ImportRow, entries: list[dict[str, Any]], claimed: set[int]) -> int | None:
+    """The Telegram entry this broker row is the real version of, if any.
+
+    Same stock, side and quantity. Same date preferred; up to three days apart
+    accepted, because the message is often sent the day after the purchase.
+    Each entry is matched at most once, so two genuine purchases of the same
+    size are never collapsed into one.
+    """
+    candidates = [
+        e for e in entries
+        if e["id"] not in claimed
+        and e["symbol"] == row.symbol
+        and str(e["side"]).upper() == row.side
+        and abs(float(e["quantity"]) - float(row.quantity)) < 1e-6
+        and e["trade_date"] is not None
+        and abs((e["trade_date"] - row.trade_date).days) <= 3
+    ]
+    if not candidates:
+        return None
+    best = min(candidates, key=lambda e: (abs((e["trade_date"] - row.trade_date).days), e["id"]))
+    return int(best["id"])
+
+
 def build_preview(
     frame: pd.DataFrame,
     *,
@@ -409,6 +453,8 @@ def build_preview(
     index = build_symbol_index()
     seen_ids = existing_order_ids(broker)
     within_file: set[str] = set()
+    telegram = telegram_entries()
+    claimed: set[int] = set()
 
     rows: list[ImportRow] = []
 
@@ -460,6 +506,10 @@ def build_preview(
             if identity in seen_ids or identity in within_file:
                 row.duplicate = True
             within_file.add(identity)
+            if not row.duplicate:
+                row.replaces_transaction_id = _match_telegram(row, telegram, claimed)
+                if row.replaces_transaction_id:
+                    claimed.add(row.replaces_transaction_id)
 
         rows.append(row)
 
@@ -488,6 +538,7 @@ def commit(
     )
 
     imported = 0
+    replaced = 0
     failures: list[dict[str, Any]] = []
 
     for row in ordered:
@@ -501,11 +552,19 @@ def commit(
             else:
                 cost = {"total": 0.0}
 
-            portfolio.record_trade(
-                row.symbol, row.side, row.trade_date, row.quantity, row.price,
-                charges=cost, broker=broker, order_id=row.order_id,
-                exchange=row.exchange, source="import", cfg=cfg,
-            )
+            if row.replaces_transaction_id:
+                portfolio.amend_transaction(
+                    row.replaces_transaction_id, price=row.price, trade_date=row.trade_date,
+                    charges=cost, broker=broker, order_id=row.order_id, source="import",
+                    notes="Telegram entry replaced by the broker's record.", cfg=cfg,
+                )
+                replaced += 1
+            else:
+                portfolio.record_trade(
+                    row.symbol, row.side, row.trade_date, row.quantity, row.price,
+                    charges=cost, broker=broker, order_id=row.order_id,
+                    exchange=row.exchange, source="import", cfg=cfg,
+                )
             imported += 1
         except Exception as exc:
             failures.append({"row": row.row_number, "symbol": row.symbol, "error": str(exc)})
@@ -513,6 +572,7 @@ def commit(
 
     return {
         "imported": imported,
+        "replaced_telegram": replaced,
         "skipped_duplicates": len(preview.duplicates),
         "skipped_problems": len(preview.problems),
         "failures": failures,

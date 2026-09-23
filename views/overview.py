@@ -9,7 +9,7 @@ import streamlit as st
 from src import db, scan
 from src.config import load_config
 from src.strategy import regime as regime_rules
-from src.ui import theme
+from src.ui import inbox, theme
 
 cfg = load_config()
 db.init_db()
@@ -26,6 +26,7 @@ st.caption(
 )
 
 theme.disclaimer()
+inbox.check_for_trades()
 
 latest = scan.latest_scan()
 

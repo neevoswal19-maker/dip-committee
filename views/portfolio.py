@@ -16,13 +16,14 @@ from src.data import prices
 from src.data.provider import StockIdentity
 from src.importers import groww
 from src.strategy import exit as ex
-from src.ui import theme
+from src.ui import inbox, theme
 
 cfg = load_config()
 db.init_db()
 pf.backfill_transactions(cfg=cfg)
 
 st.markdown("# Portfolio")
+inbox.check_for_trades()
 st.caption("What you hold, what the exit doctrine says about it today, and the tax clock.")
 
 

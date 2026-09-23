@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator
 
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer,
+    BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer,
     MetaData, String, Table, Text, UniqueConstraint, create_engine, select,
 )
 from sqlalchemy.engine import Engine
@@ -409,6 +409,22 @@ alerts_sent = Table(
     Column("body", Text),
     Column("delivered", Boolean, default=False),
     Column("error", Text),
+)
+
+# Messages sent *to* the bot. Each Telegram update is claimed here before it
+# is acted on, and update_id is unique, so the 15-minute job and a dashboard
+# page load cannot both record the same purchase.
+telegram_inbox = Table(
+    "telegram_inbox", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("update_id", BigInteger, unique=True, nullable=False),
+    Column("received_at", DateTime, default=now),
+    Column("message_at", DateTime),          # when it was sent, IST
+    Column("chat_id", String(32)),
+    Column("text", Text),
+    Column("status", String(16)),            # claimed | recorded | rejected | ignored | undone | error
+    Column("transaction_id", Integer),
+    Column("reply", Text),
 )
 
 

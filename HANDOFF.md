@@ -485,6 +485,54 @@ Reproduce: `python jobs/validate_conviction.py --universe 300 --years 11
 --every 21 --dump obs.csv`. Prices are disk-cached, so a re-run takes about a
 minute.
 
+## Recording trades by Telegram message (built 2026-09-23)
+
+The owner messages the bot after buying on Groww, and the trade lands in the
+portfolio. Code is in `src/alerts/telegram_inbox.py`; tests are in
+`tests/test_telegram_inbox.py`.
+
+| Message | Result |
+|---|---|
+| `INDIANB 30`, `bought INDIANB 30` | BUY 30 |
+| `sold INDIANB 30` | SELL 30, FIFO |
+| `30` as a reply to a BUY / EXIT / TRIM alert | that alert's stock, with the side implied |
+| `... @ 842.50` | exact price instead of an estimate |
+| `undo` | reverses the last Telegram trade (only trades with `source='telegram'`) |
+| `holdings` | open positions |
+
+**Nothing listens continuously.** Telegram keeps unread messages for 24
+hours. `process_pending` runs from `.github/workflows/telegram-inbox.yml`
+every 15 minutes, every day. It also runs when the Overview or Portfolio page
+loads (at most once a minute per session, see `src/ui/inbox.py`) and in the
+daily scan before the holdings check.
+
+**Rules not to break:**
+- Only `TELEGRAM_CHAT_ID` is obeyed. Other chats are logged and ignored, with
+  no reply. The repo is public and anyone can message a bot.
+- Each update is claimed first. `telegram_inbox.update_id` is unique, and the
+  transaction's order id is `tg-<update_id>`, so racing callers can't record
+  twice.
+- The trade date and price come from the message's own timestamp (IST), not
+  from when it was processed. `prices.price_at` uses the 1-minute bar at or
+  before that minute and falls back to the live quote. If neither answers, it
+  asks for the price rather than guessing.
+- A new position gets an exit doctrine, plus the committee's conviction and
+  stop if the stock was assessed in the last 30 days, the same as the
+  dashboard's entry form.
+- **The Groww import replaces Telegram estimates instead of doubling them.**
+  A row matching a `source='telegram'` transaction on stock, side and
+  quantity, dated within 3 days (same day preferred, each matched once), is
+  amended in place by `portfolio.amend_transaction`. That keeps the position,
+  its FIFO order and its conviction.
+- The bot token is in every API URL, so errors are redacted before they're
+  logged, in both the inbox and `telegram.send`.
+
+**Fixed along the way:** `portfolio.delete_transaction` used to leave a
+closed-trade record behind when a closing sale was removed, which is a
+phantom win or loss for the learning loop. It also left an empty position
+when the only buy was removed. Both are handled now, and this affects the
+dashboard's "Remove a transaction" as well.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important

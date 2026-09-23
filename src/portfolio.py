@@ -409,6 +409,42 @@ def synthetic_order_id(
     return "syn_" + hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
+def _charge_breakdown(
+    side: str,
+    quantity: float,
+    price: float,
+    charges: dict[str, float] | charge_model.ChargeBreakdown | None,
+    *,
+    cfg: Any,
+    broker: str | None,
+) -> dict[str, float]:
+    """Charges as a dict with a `total`, estimating them when none are given."""
+    if isinstance(charges, charge_model.ChargeBreakdown):
+        return charges.to_dict()
+    if charges is None:
+        return charge_model.estimate(side, quantity, price, cfg=cfg, broker=broker).to_dict()
+    breakdown = dict(charges)
+    breakdown.setdefault(
+        "total",
+        round(sum(v for k, v in breakdown.items() if k != "total" and isinstance(v, (int, float))), 2),
+    )
+    return breakdown
+
+
+def _charge_columns(breakdown: dict[str, float]) -> dict[str, float]:
+    return {
+        "brokerage": breakdown.get("brokerage", 0.0),
+        "stt": breakdown.get("stt", 0.0),
+        "exchange_fee": breakdown.get("exchange_fee", 0.0),
+        "sebi_fee": breakdown.get("sebi_fee", 0.0),
+        "stamp_duty": breakdown.get("stamp_duty", 0.0),
+        "gst": breakdown.get("gst", 0.0),
+        "dp_charge": breakdown.get("dp_charge", 0.0),
+        "other_charges": breakdown.get("other", 0.0),
+        "total_charges": float(breakdown.get("total", 0.0)),
+    }
+
+
 def record_trade(
     symbol: str,
     side: Side,
@@ -441,17 +477,7 @@ def record_trade(
     if price <= 0:
         raise LedgerError("price must be positive")
 
-    if isinstance(charges, charge_model.ChargeBreakdown):
-        breakdown = charges.to_dict()
-    elif charges is None:
-        breakdown = charge_model.estimate(side, quantity, price, cfg=cfg, broker=broker).to_dict()
-    else:
-        breakdown = dict(charges)
-        breakdown.setdefault(
-            "total",
-            round(sum(v for k, v in breakdown.items() if k != "total" and isinstance(v, (int, float))), 2),
-        )
-
+    breakdown = _charge_breakdown(side, quantity, price, charges, cfg=cfg, broker=broker)
     total_charges = float(breakdown.get("total", 0.0))
 
     if position_id is None:
@@ -482,15 +508,7 @@ def record_trade(
                 trade_date=trade_date,
                 quantity=float(quantity),
                 price=float(price),
-                brokerage=breakdown.get("brokerage", 0.0),
-                stt=breakdown.get("stt", 0.0),
-                exchange_fee=breakdown.get("exchange_fee", 0.0),
-                sebi_fee=breakdown.get("sebi_fee", 0.0),
-                stamp_duty=breakdown.get("stamp_duty", 0.0),
-                gst=breakdown.get("gst", 0.0),
-                dp_charge=breakdown.get("dp_charge", 0.0),
-                other_charges=breakdown.get("other", 0.0),
-                total_charges=total_charges,
+                **_charge_columns(breakdown),
                 gross_amount=gross,
                 net_amount=net,
                 broker=(broker or cfg.get("charges.default_broker", "manual")),
@@ -521,8 +539,111 @@ def delete_transaction(transaction_id: int, *, cfg: Any = None) -> None:
         position_id = row.position_id
         conn.execute(delete(db.transactions).where(db.transactions.c.id == transaction_id))
 
-    if position_id is not None:
-        _sync_position(position_id, cfg=cfg)
+    if position_id is None:
+        return
+
+    if not transactions_for(position_id) and _remove_position_if_unreferenced(position_id):
+        return
+
+    state = _sync_position(position_id, cfg=cfg)
+    # Removing a sale can reopen a position whose closed-trade record was
+    # already written. Left in place, that record is a win or loss that never
+    # happened, and the learning loop would be trained on it.
+    _refresh_trade_record(position_id, state, cfg)
+
+
+def amend_transaction(
+    transaction_id: int,
+    *,
+    price: float,
+    trade_date: date,
+    charges: dict[str, float] | charge_model.ChargeBreakdown | None = None,
+    broker: str | None = None,
+    order_id: str | None = None,
+    source: str = "import",
+    notes: str | None = None,
+    cfg: Any = None,
+) -> PositionState:
+    """Correct a recorded trade in place and resync its position.
+
+    Used when a broker import supersedes an estimate - a Telegram entry
+    priced from the market at the minute it was sent. Amending rather than
+    deleting and re-inserting keeps the position, its conviction and exit
+    doctrine, and the trade's place in FIFO order.
+    """
+    cfg = cfg or load_config()
+    with db.connection() as conn:
+        row = conn.execute(
+            select(db.transactions).where(db.transactions.c.id == transaction_id)
+        ).first()
+    if row is None:
+        raise LedgerError(f"no transaction {transaction_id}")
+    if price <= 0:
+        raise LedgerError("price must be positive")
+
+    record = dict(row._mapping)
+    side, quantity = str(record["side"]).upper(), float(record["quantity"])
+    breakdown = _charge_breakdown(side, quantity, price, charges, cfg=cfg, broker=broker)
+
+    values: dict[str, Any] = {
+        "price": float(price),
+        "trade_date": trade_date,
+        **_charge_columns(breakdown),
+        "gross_amount": round(quantity * price, 2),
+        "net_amount": charge_model.net_amount(side, quantity, price, float(breakdown.get("total", 0.0))),
+        "source": source,
+        "notes": notes,
+    }
+    if broker:
+        values["broker"] = broker
+    if order_id:
+        values["order_id"] = order_id
+
+    with db.connection() as conn:
+        conn.execute(
+            db.transactions.update().where(db.transactions.c.id == transaction_id).values(**values)
+        )
+
+    state = _sync_position(record["position_id"], cfg=cfg)
+    _refresh_trade_record(record["position_id"], state, cfg)
+    return state
+
+
+def _refresh_trade_record(position_id: int, state: PositionState, cfg: Any) -> None:
+    """Make the closed-trade record match the position as it now stands."""
+    with db.connection() as conn:
+        existing = conn.execute(
+            select(db.trades.c.id).where(db.trades.c.position_id == position_id)
+        ).fetchall()
+        for trade in existing:
+            referenced = conn.execute(
+                select(db.lessons.c.id).where(db.lessons.c.trade_id == trade.id).limit(1)
+            ).first()
+            if referenced:
+                # A lesson was drawn from this trade; keep both rather than
+                # orphan the lesson. Rare, and visible in the log.
+                log.warning("Trade %s has lessons attached; left in place", trade.id)
+                return
+            conn.execute(delete(db.trades).where(db.trades.c.id == trade.id))
+
+    if state.status == "closed":
+        _write_trade_record(position_id, state, cfg)
+
+
+def _remove_position_if_unreferenced(position_id: int) -> bool:
+    """Delete a position left with no transactions, if nothing else points at it.
+
+    Undoing the only purchase of a stock should leave no trace, not an empty
+    closed position in the history.
+    """
+    with db.connection() as conn:
+        for table in (db.transactions, db.trades, db.exit_signals, db.position_events):
+            if conn.execute(
+                select(table.c.id).where(table.c.position_id == position_id).limit(1)
+            ).first():
+                return False
+        conn.execute(delete(db.positions).where(db.positions.c.id == position_id))
+    return True
 
 
 def _write_trade_record(position_id: int, state: PositionState, cfg: Any) -> None:
