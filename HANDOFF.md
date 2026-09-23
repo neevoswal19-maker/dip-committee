@@ -121,6 +121,25 @@ Don't re-estimate these; they came from real data.
   (market holiday, or not yet published) as a transient failure: twelve wasted
   seconds and ERROR lines for something working correctly. `cache.NotFound` now
   short-circuits the retry loop.
+- **Streamlit Cloud defaults to Python 3.14; this project needs 3.12.**
+  The first deploy crashed with a TypeError inside
+  `metadata.create_all()`. Every pin here was tested on 3.12, and pg8000
+  1.31.5 - the newest release - declares support only to 3.13 (SQLAlchemy
+  2.0.54 does claim 3.14, so pg8000 is the suspect rather than a confirmed
+  cause; the full traceback was never captured). **`runtime.txt` is ignored
+  by Streamlit Cloud** (streamlit/streamlit#15326), and the Python version
+  cannot be changed after deploy - the app must be deleted and recreated
+  with the version set in Advanced settings. If a future redeploy breaks
+  mysteriously, check the Python version first.
+- **The password gate shipped with a NameError.** Rewriting `authenticated()`
+  to use `dashboard_access_mode()` removed the line binding `password` but
+  left `if entered == password` using it, so every login raised. Nothing
+  caught it because `app.py` needs a Streamlit runtime to import, so no test
+  touched it. `tests/test_access.py::TestLoginPathIsExecutable` now parses
+  app.py with `ast` and checks the login path for undefined names - static,
+  so it needs no runtime. The comparison also moved to
+  `secrets.compare_digest`, with an explicit empty-input guard because
+  `compare_digest("", "")` is True.
 - **Red flags were double-counted.** The Bear Case Analyst re-emits other bots'
   flags with the source prefixed, so each arrived twice. The count feeds the
   sizing band's red-flag test, so a duplicate could shrink a position for no
@@ -286,7 +305,11 @@ accounts, in this order:
 5. **Secrets** - the same four in both GitHub repository secrets and Streamlit
    Advanced settings: `DATABASE_URL`, `DASHBOARD_PASSWORD`,
    `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-6. **Streamlit Cloud** - deploy from the repo, main file `app.py`.
+6. **Streamlit Cloud** - deploy from the repo, main file `app.py`, and
+   **set Python 3.12 in Advanced settings**. The default is 3.14 and it does
+   not work; the version cannot be changed later without deleting the app.
+   `.streamlit/secrets.toml` is generated locally (gitignored) in the TOML
+   shape Streamlit's Secrets box expects.
 7. **Verify** - trigger the Daily scan workflow manually from the Actions tab,
    confirm a Telegram message arrives, open the app and check the password
    gate holds and the candidates match.
