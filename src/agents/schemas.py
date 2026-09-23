@@ -42,6 +42,13 @@ def stance_for(score: float, *, threshold: float = 1.0) -> Stance:
     return "NEUTRAL"
 
 
+
+def _now_ist() -> datetime:
+    # Imported lazily: schemas must stay importable without a database.
+    from src.db import now
+    return now()
+
+
 @dataclass
 class Evidence:
     """One measurement, named so it can be traced back to its source."""
@@ -149,7 +156,7 @@ class CommitteeReport:
     """The CMIO's final output: what the whole committee concluded."""
 
     symbol: str
-    run_at: datetime = field(default_factory=datetime.now)
+    run_at: datetime = field(default_factory=_now_ist)
     trade_date: date | None = None
     price: float = 0.0
     sector: str | None = None

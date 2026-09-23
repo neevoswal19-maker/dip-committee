@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator
 
 from sqlalchemy import (
@@ -26,6 +26,25 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from src.config import database_url
+
+
+#: India has no daylight saving, so a fixed offset is exact and needs no tz
+#: database - which matters on Windows, where zoneinfo has none without the
+#: tzdata package.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now() -> datetime:
+    """The current time in IST, naive, for every stored timestamp.
+
+    `datetime.now()` returns the *machine's* local time. On this PC that is
+    IST; on a GitHub runner and on Streamlit Cloud it is UTC. Rows written
+    from both into one database were 5h30m apart, so a local test scan sorted
+    as newer than the evening's real one. Every writer and every "how long
+    ago" calculation goes through here so they agree wherever they run.
+    """
+    return datetime.now(IST).replace(tzinfo=None)
+
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +61,7 @@ stocks = Table(
     Column("industry", String(128)),
     Column("isin", String(32)),
     Column("in_universe", Boolean, default=True),
-    Column("updated_at", DateTime, default=datetime.now),
+    Column("updated_at", DateTime, default=now),
 )
 
 # Daily bars including delivery, which Yahoo does not carry. The daily scan
@@ -69,7 +88,7 @@ price_bars = Table(
 scans = Table(
     "scans", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("run_at", DateTime, default=datetime.now, nullable=False),
+    Column("run_at", DateTime, default=now, nullable=False),
     Column("trade_date", Date),
     Column("universe", String(64)),
     Column("universe_size", Integer),
@@ -110,7 +129,7 @@ committee_runs = Table(
     "committee_runs", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("symbol", String(32), nullable=False),
-    Column("run_at", DateTime, default=datetime.now, nullable=False),
+    Column("run_at", DateTime, default=now, nullable=False),
     Column("trade_date", Date),
     Column("price_at_run", Float),
     Column("stance", String(32)),           # BUY | WATCH | NO_BUY
@@ -224,7 +243,7 @@ transactions = Table(
     Column("tranche_label", String(32)),   # T1 | T2 | T3 | trim | exit
     Column("notes", Text),
     Column("source", String(16), default="manual"),   # manual | import
-    Column("created_at", DateTime, default=datetime.now),
+    Column("created_at", DateTime, default=now),
 
     # Re-importing the same broker file must be a no-op rather than a
     # duplicate. Where a file carries no order id the importer synthesises a
@@ -240,7 +259,7 @@ position_events = Table(
     "position_events", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("position_id", Integer, ForeignKey("positions.id"), nullable=False),
-    Column("occurred_at", DateTime, default=datetime.now),
+    Column("occurred_at", DateTime, default=now),
     Column("event_type", String(32)),   # tranche_fill | trim | exit | review | note
     Column("price", Float),
     Column("quantity", Float),
@@ -251,7 +270,7 @@ exit_signals = Table(
     "exit_signals", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("position_id", Integer, ForeignKey("positions.id"), nullable=False),
-    Column("signalled_at", DateTime, default=datetime.now),
+    Column("signalled_at", DateTime, default=now),
     Column("rule", String(64)),         # thesis_break | trailing_stop | target | ltcg | valuation
     Column("severity", String(16)),     # info | warn | urgent
     Column("action", String(32)),       # HOLD | TRIM | EXIT | REVIEW
@@ -289,7 +308,7 @@ trades = Table(
     Column("captured_fraction", Float),  # return_pct / mfe_pct
     Column("exit_reason", String(128)),
     Column("was_ltcg", Boolean),
-    Column("closed_at", DateTime, default=datetime.now),
+    Column("closed_at", DateTime, default=now),
     Index("ix_trades_symbol", "symbol"),
 )
 
@@ -311,7 +330,7 @@ trade_checkpoints = Table(
 bot_attribution = Table(
     "bot_attribution", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("computed_at", DateTime, default=datetime.now),
+    Column("computed_at", DateTime, default=now),
     Column("bot_id", String(64), nullable=False),
     Column("desk", String(32)),
     Column("horizon_days", Integer),
@@ -330,7 +349,7 @@ bot_attribution = Table(
 weight_versions = Table(
     "weight_versions", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("created_at", DateTime, default=datetime.now),
+    Column("created_at", DateTime, default=now),
     Column("is_active", Boolean, default=False),
     Column("source", String(32)),        # seed | learner | manual | rollback
     Column("payload_json", Text, nullable=False),
@@ -346,7 +365,7 @@ weight_versions = Table(
 lessons = Table(
     "lessons", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("created_at", DateTime, default=datetime.now),
+    Column("created_at", DateTime, default=now),
     Column("trade_id", Integer, ForeignKey("trades.id")),
     Column("symbol", String(32)),
     Column("outcome", String(16)),       # win | loss
@@ -363,7 +382,7 @@ lessons = Table(
 proposals = Table(
     "proposals", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("created_at", DateTime, default=datetime.now),
+    Column("created_at", DateTime, default=now),
     Column("kind", String(32)),          # threshold | weight | rule
     Column("config_path", String(128)),
     Column("current_value", String(64)),
@@ -380,7 +399,7 @@ proposals = Table(
 alerts_sent = Table(
     "alerts_sent", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("sent_at", DateTime, default=datetime.now),
+    Column("sent_at", DateTime, default=now),
     Column("channel", String(32)),
     Column("alert_type", String(32)),
     Column("symbol", String(32)),

@@ -67,7 +67,7 @@ def run_scan(
     with db.connection() as conn:
         scan_id = conn.execute(
             db.scans.insert().values(
-                run_at=datetime.now(),
+                run_at=db.now(),
                 trade_date=nse.last_trading_day(),
                 universe=index,
                 status="running",
@@ -251,7 +251,7 @@ def convictions_for(symbols: list[str]) -> dict[str, dict[str, Any]]:
                     db.committee_runs.c.summary,
                 )
                 .where(db.committee_runs.c.symbol == symbol.upper())
-                .order_by(desc(db.committee_runs.c.run_at))
+                .order_by(desc(db.committee_runs.c.id))
                 .limit(1)
             ).first()
             if row is not None:
@@ -291,7 +291,8 @@ def latest_scan() -> dict[str, Any] | None:
     db.init_db()
     with db.connection() as conn:
         row = conn.execute(
-            select(db.scans).where(db.scans.c.status == "complete").order_by(desc(db.scans.c.run_at)).limit(1)
+            # By id, not run_at - see db.now() for how the clocks disagreed.
+            select(db.scans).where(db.scans.c.status == "complete").order_by(desc(db.scans.c.id)).limit(1)
         ).first()
     return dict(row._mapping) if row else None
 
@@ -300,7 +301,7 @@ def scan_history(limit: int = 30) -> list[dict[str, Any]]:
     db.init_db()
     with db.connection() as conn:
         rows = conn.execute(
-            select(db.scans).order_by(desc(db.scans.c.run_at)).limit(limit)
+            select(db.scans).order_by(desc(db.scans.c.id)).limit(limit)
         ).fetchall()
     return [dict(r._mapping) for r in rows]
 

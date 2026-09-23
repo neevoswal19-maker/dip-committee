@@ -11,7 +11,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import scan
+from src import db, scan
 from src.config import is_deployed, load_config
 from src.ui import theme
 
@@ -100,7 +100,7 @@ candidates = scan.candidates_for(latest["id"], include_near_misses=True)
 passed = [c for c in candidates if c.get("rank") is not None]
 near_misses = [c for c in candidates if c.get("rank") is None]
 
-age_minutes = (datetime.now() - latest["run_at"]).total_seconds() / 60
+age_minutes = (db.now() - latest["run_at"]).total_seconds() / 60
 st.caption(
     f"Scan #{latest['id']} - {latest['universe']} - "
     f"{latest['run_at'].strftime('%d %b %Y, %H:%M')} "

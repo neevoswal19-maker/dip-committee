@@ -212,7 +212,9 @@ def latest_run(symbol: str) -> dict[str, Any] | None:
         row = conn.execute(
             select(db.committee_runs)
             .where(db.committee_runs.c.symbol == symbol.upper())
-            .order_by(desc(db.committee_runs.c.run_at))
+            # By id, not run_at: ids increase monotonically whichever
+            # machine wrote the row, clocks and time zones notwithstanding.
+            .order_by(desc(db.committee_runs.c.id))
             .limit(1)
         ).first()
 
@@ -286,7 +288,7 @@ def rebuild_report(run: dict[str, Any]) -> CommitteeReport | None:
 
     report = CommitteeReport(
         symbol=run["symbol"],
-        run_at=run.get("run_at") or datetime.now(),
+        run_at=run.get("run_at") or db.now(),
         trade_date=run.get("trade_date"),
         price=float(run.get("price_at_run") or 0.0),
         desks=desks,
@@ -315,6 +317,6 @@ def recent_runs(limit: int = 25) -> list[dict[str, Any]]:
     db.init_db()
     with db.connection() as conn:
         rows = conn.execute(
-            select(db.committee_runs).order_by(desc(db.committee_runs.c.run_at)).limit(limit)
+            select(db.committee_runs).order_by(desc(db.committee_runs.c.id)).limit(limit)
         ).fetchall()
     return [dict(r._mapping) for r in rows]

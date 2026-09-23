@@ -77,7 +77,7 @@ def send(
         with db.connection() as conn:
             conn.execute(
                 db.alerts_sent.insert().values(
-                    sent_at=datetime.now(), channel="telegram", alert_type=alert_type,
+                    sent_at=db.now(), channel="telegram", alert_type=alert_type,
                     symbol=symbol, dedupe_key=key, body=body[:4000], delivered=False,
                 )
             )

@@ -35,7 +35,7 @@ if latest is None:
         "minute for the full universe."
     )
 else:
-    age = datetime.now() - latest["run_at"]
+    age = db.now() - latest["run_at"]
     hours = age.total_seconds() / 3600
     freshness = (
         f"{int(age.total_seconds() // 60)} min ago" if hours < 1

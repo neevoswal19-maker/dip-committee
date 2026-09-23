@@ -165,6 +165,29 @@ Don't re-estimate these; they came from real data.
 
 ---
 
+### Timestamps from different machines disagreed (found 2026-09-23)
+
+`datetime.now()` gives the *machine's* local time: IST on the dev PC, UTC on
+GitHub runners and Streamlit Cloud. All three write to one Neon database, so a
+local test scan at 16:42 IST sorted as newer than the real 501-stock run at
+13:17 UTC. The dashboard showed the stale 120-stock scan, and the job's BUY
+alert step read the wrong scan. That night it cost nothing (same candidate,
+INDIANB, WATCH 53 either way), but only by luck.
+
+Two fixes, keep both:
+- **"Latest" is chosen by `id`, never by a timestamp.** This covers
+  `scan.latest_scan`, `scan.scan_history`, `scan.convictions_for`,
+  `committee.latest_run` and `committee.recent_runs`. Postgres ids only ever
+  increase, whichever machine wrote the row.
+- **Every stored timestamp and every "N hours ago" goes through `db.now()`**,
+  which is IST with a fixed +5:30 offset. India has no daylight saving, and
+  the fixed offset avoids needing `tzdata` on Windows. Don't write
+  `datetime.now()` into the database.
+
+The four rows the runner had stamped in UTC (scans 2 and 3, committee run 3,
+alert 3) were shifted +5:30 by id. `tests/test_clock.py` rebuilds the incident
+with its real timestamps.
+
 ## Architecture
 
 ```
