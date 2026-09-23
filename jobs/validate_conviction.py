@@ -54,6 +54,7 @@ PRICE_SIGNALS = (
     "pct_vs_dma_long",
     "atr_pct",
     "screen_score",
+    "screen_score_legacy",
     "dip_conviction",
 )
 
@@ -63,6 +64,33 @@ def screen_score_at(metrics: dict, cfg) -> float:
     from src import screener
 
     return screener.score_candidate(metrics, cfg)
+
+
+
+def legacy_screen_score(metrics: dict, cfg) -> float:
+    """The scoring function as it stood before 2026-09-23, frozen here.
+
+    Kept verbatim so the revision can be judged against it on symbols neither
+    version was designed on. Delivery terms are omitted from both sides -
+    historical delivery is not available - so this compares exactly the part
+    that changed.
+    """
+    score = 0.0
+    drawdown = metrics.get("drawdown_pct")
+    if drawdown is not None:
+        low = float(cfg.get("dip.drawdown_min_pct", 10.0))
+        high = float(cfg.get("dip.drawdown_max_pct", 35.0))
+        midpoint = (low + high) / 2.0
+        score += 25.0 * max(0.0, 1.0 - abs(drawdown - midpoint) / (high - low))
+    rsi = metrics.get("rsi")
+    if rsi is not None:
+        score += 20.0 * max(0.0, min(1.0, (float(cfg.get("dip.rsi_max", 40.0)) - rsi) / 15.0))
+    slope = metrics.get("dma_slope_pct")
+    if slope is not None:
+        score += 15.0 * max(0.0, min(1.0, slope / 10.0))
+    if metrics.get("near_support"):
+        score += 5.0
+    return round(score, 1)
 
 
 def dip_conviction_at(metrics: dict, cfg) -> float:
@@ -172,6 +200,7 @@ def observe(
                 "near_support": False,
             }
             metrics["screen_score"] = screen_score_at(metrics, cfg)
+            metrics["screen_score_legacy"] = legacy_screen_score(metrics, cfg)
             metrics["dip_conviction"] = dip_conviction_at(metrics, cfg)
 
             record = {
@@ -206,6 +235,8 @@ def observe(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Measure whether our signals predict")
     parser.add_argument("--universe", type=int, default=150, help="how many symbols")
+    parser.add_argument("--offset", type=int, default=0,
+                        help="skip this many symbols first - use for a holdout run")
     parser.add_argument("--years", type=float, default=6.0)
     parser.add_argument("--every", type=int, default=21, help="sample every N sessions")
     args = parser.parse_args()
@@ -217,7 +248,9 @@ def main() -> int:
     if not universe.usable or not universe.value:
         print("Could not load the universe.")
         return 1
-    symbols = [s.symbol for s in universe.value[: args.universe]]
+    symbols = [
+        s.symbol for s in universe.value[args.offset : args.offset + args.universe]
+    ]
 
     end = date.today() - timedelta(days=max(horizons) + 10)
     start = end - timedelta(days=int(args.years * 365.25))
@@ -262,6 +295,32 @@ def main() -> int:
     for result in sorted(cs_results, key=lambda r: -abs(r.mean_ic)):
         print("  " + result.describe())
 
+    # --- Old scoring against new, on whatever symbols this run used.
+    print("")
+    print("=" * 96)
+    print("OLD SCORE vs NEW SCORE")
+    print("=" * 96)
+    print("  Delivery is excluded from both - no historical delivery data - so this")
+    print("  isolates the price terms, which is the part that was revised.")
+    for horizon in horizons:
+        old_cs = attribution.cross_sectional_ic(observations, "screen_score_legacy", horizon)
+        new_cs = attribution.cross_sectional_ic(observations, "screen_score", horizon)
+        if not (old_cs and new_cs):
+            continue
+        print(f"\n  {horizon} sessions, within-month ranking:")
+        print(f"    old  IC {old_cs.mean_ic:+.3f}  t {old_cs.t_stat:+5.2f}  "
+              f"p {old_cs.p_value:.3f}  {old_cs.share_positive:4.0%} of months positive")
+        print(f"    new  IC {new_cs.mean_ic:+.3f}  t {new_cs.t_stat:+5.2f}  "
+              f"p {new_cs.p_value:.3f}  {new_cs.share_positive:4.0%} of months positive")
+
+        for label, key in (("old", "screen_score_legacy"), ("new", "screen_score")):
+            rows = [o for o in observations if o.get(f"return_{horizon}") is not None]
+            frame = pd.DataFrame(rows)
+            frame["b"] = pd.qcut(frame[key], 5, labels=False, duplicates="drop")
+            grouped = frame.groupby("b")[f"return_{horizon}"].mean()
+            print(f"    {label}  top-quintile minus bottom: "
+                  f"{grouped.iloc[-1] - grouped.iloc[0]:+.2f}%")
+
     # --- Regime split: rising market versus falling.
     print("\n" + "=" * 96)
     print("REGIME SPLIT: is any edge just beta in disguise?")
@@ -282,7 +341,7 @@ def main() -> int:
             if len(subset) < 100:
                 print(f"    {label:<14} too few observations")
                 continue
-            for name in ("atr_pct", "pct_vs_dma_long", "drawdown_pct", "dip_conviction"):
+            for name in ("screen_score", "screen_score_legacy", "atr_pct", "pct_vs_dma_long"):
                 res = attribution.information_coefficient(
                     [o.get(name) for o in subset],
                     [o.get(f"return_{horizon}") for o in subset],

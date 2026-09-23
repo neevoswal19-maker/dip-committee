@@ -286,25 +286,70 @@ def score_candidate(metrics: dict[str, Any], cfg: Any) -> float:
     verdict. Everything scored here already passed all three stages, so the
     question is no longer "is this valid" but "which of these valid ones
     should the expensive analysis look at first".
+
+    **Revised 2026-09-23, after measurement.** The previous weights were
+    reasonable-sounding and did not work: across 4,321 point-in-time
+    observations the old score had an information coefficient of -0.010 at 21
+    sessions, -0.013 at 63 and -0.022 at 126 - zero, tipping slightly the
+    wrong way. `jobs/validate_conviction.py` reproduces that.
+
+    Three things changed, each because the data said so:
+
+    * **Dip depth no longer peaks in the middle of the band.** The old hump
+      rewarded a ~22% drawdown most. Measured within-month, deeper drawdowns
+      did *worse* (cross-sectional IC -0.032 at 126 sessions, positive in only
+      46% of months). Depth is now scored monotonically - shallower is better
+      inside the band - and its weight is cut from 25 to 15.
+    * **Distance above the 200-DMA is added, at the largest price weight.** It
+      was absent entirely, and it is the one price signal that survived every
+      correction: within-month IC +0.085 at 126 sessions, t +4.38, positive in
+      71% of the 70 months, and it does not flip sign when the market falls.
+      Among candidates the screen surfaces, the shallower dips win.
+    * **RSI drops from 20 to 5.** Its IC never cleared +0.019 at any horizon
+      and never approached significance. It is kept at token weight because it
+      is the conventional oversold read and its absence would be surprising,
+      not because it was shown to work.
+
+    Deliberately *not* changed:
+
+    * **Delivery keeps its 35 points.** It could not be measured - the
+      database holds a single session of delivery history, so there was
+      nothing to backtest against. Cutting an unmeasured signal is not the
+      same as cutting a disproven one, and delivery is the India-specific
+      edge this whole strategy rests on. It stays until there is evidence,
+      which will take months of accumulated `price_bars` to gather.
+    * **ATR is not added**, despite reading as the strongest signal in the
+      pooled test (+0.081 at 126 sessions, the only survivor of a Bonferroni
+      correction). The regime split disqualified it: +0.108 when the market
+      rose, -0.053 when it fell. A signal whose sign follows the market is
+      measuring beta. Buying high-ATR names would have looked brilliant over
+      this particular six years and would raise drawdowns without adding edge.
     """
     score = 0.0
 
-    # Dip depth: the middle of the band is the sweet spot. Too shallow is
-    # not worth acting on, too deep usually means something broke.
+    # Dip depth, monotone: within the band, shallower beats deeper.
     drawdown = metrics.get("drawdown_pct")
     if drawdown is not None:
         low = float(cfg.get("dip.drawdown_min_pct", 10.0))
         high = float(cfg.get("dip.drawdown_max_pct", 35.0))
-        midpoint = (low + high) / 2.0
-        closeness = 1.0 - abs(drawdown - midpoint) / (high - low)
-        score += 25.0 * max(0.0, closeness)
+        shallowness = (high - float(drawdown)) / (high - low)
+        score += 15.0 * max(0.0, min(1.0, shallowness))
 
-    # Oversold, but deeply oversold in a falling market is not a bonus.
+    # Distance above the long DMA - the strongest measured price signal.
+    # Scored over a -10% to +10% span: at or above the average earns full
+    # marks, well below it earns nothing. A stock can be far off its 52-week
+    # high and still sit above a rising 200-DMA, which is precisely the
+    # distinction the old score was blind to.
+    distance = metrics.get("pct_vs_dma_long")
+    if distance is not None:
+        score += 30.0 * max(0.0, min(1.0, (float(distance) + 10.0) / 20.0))
+
+    # Oversold. Token weight: measured at no better than noise.
     rsi = metrics.get("rsi")
     if rsi is not None:
-        score += 20.0 * max(0.0, min(1.0, (float(cfg.get("dip.rsi_max", 40.0)) - rsi) / 15.0))
+        score += 5.0 * max(0.0, min(1.0, (float(cfg.get("dip.rsi_max", 40.0)) - rsi) / 15.0))
 
-    # Delivery conviction: the India-specific edge carries the most weight.
+    # Delivery conviction: the India-specific edge, and still unmeasured.
     ratio = metrics.get("down_day_delivery_ratio_avg10")
     if ratio is not None:
         score += 25.0 * max(0.0, min(1.0, (ratio - 1.0) / 0.5))
@@ -313,10 +358,12 @@ def score_candidate(metrics: dict[str, Any], cfg: Any) -> float:
     if persistence is not None:
         score += 10.0 * min(1.0, persistence / 5.0)
 
-    # Trend strength: a firmly rising long average is worth more than a flat one.
+    # Trend strength. Halved: the 200-DMA slope is already an unconditional
+    # pass/fail gate in `evaluate_dip`, so scoring it again partly rewards a
+    # test the candidate had to clear to get here at all.
     slope = metrics.get("dma_slope_pct")
     if slope is not None:
-        score += 15.0 * max(0.0, min(1.0, slope / 10.0))
+        score += 10.0 * max(0.0, min(1.0, float(slope) / 10.0))
 
     if metrics.get("near_support"):
         score += 5.0

@@ -275,7 +275,16 @@ multi-stock work (500 stocks: 45s vs 37min).
 - The self-learning loop (`src/learning/`) — schema exists, no code
 - Deployment to Streamlit Cloud + Postgres
 
-## Does conviction predict returns? Measured 2026-09-23. No.
+## Does the ranking predict returns? Measured 2026-09-23, then fixed.
+
+**First, a correction to how this was framed.** The committee's `conviction`
+contains **no price technicals whatsoever** — `cmio.decide` weighs the five
+desk reports and nothing else. The `dip_conviction` figure in
+`jobs/validate_conviction.py` is a proxy constructed *for the test*, not a
+number the system emits. The real price-derived ranking the system uses is
+`screen_score` from `screener.score_candidate`, and that is what was measured
+and what was changed. Do not read the `dip_conviction` row as a verdict on the
+committee.
 
 This was the last open question of substance and it now has an answer, so do
 not re-open it from scratch — reproduce it with `jobs/validate_conviction.py`.
@@ -345,6 +354,64 @@ by the same Windows Application Control policy that blocked psycopg2. Spearman
 and the p-values in `src/learning/attribution.py` are implemented directly on
 numpy/pandas ranks with an erf-based normal approximation. Do not reintroduce
 a scipy import.
+
+
+### The fix, and how far it can be trusted
+
+`screener.score_candidate` was rewritten on 2026-09-23. Weights still total
+100. Three changes, each traceable to a measurement:
+
+| term | before | after | why |
+|---|---|---|---|
+| dip depth | 25, peaking mid-band | 15, monotone (shallower better) | deeper dips measured *worse*, cross-sectional IC -0.032 at 126d |
+| distance above 200-DMA | **absent** | **30** | the only signal surviving every correction: +0.085 at 126d, t +4.38, positive in 71% of months |
+| RSI | 20 | 5 | IC never cleared +0.019 at any horizon |
+| delivery ratio + persistence | 35 | 35, unchanged | **could not be measured** — one session of history in the DB. Unmeasured is not disproven, and this is the strategy's stated edge |
+| 200-DMA slope | 15 | 10 | already an unconditional pass/fail gate in `evaluate_dip`; scoring it again part-rewards a test the candidate had to clear |
+| ATR | absent | **deliberately still absent** | strongest pooled signal (+0.081) and the only Bonferroni survivor, but the regime split disqualified it: +0.108 when the market rose, -0.053 when it fell. That is beta |
+
+**Validated out of sample.** The change was designed on Nifty 500 symbols
+1–150 and tested on 151–300, which the design never touched (4,408
+observations). Within-month ranking, new vs old:
+
+| horizon | old IC | new IC | old spread | new spread |
+|---|---|---|---|---|
+| 21d | +0.013 | -0.029 | +0.09% | +0.82% |
+| 63d | +0.022 | +0.003 | -0.61% | +3.84% |
+| **126d** | **+0.008** | **+0.048** (p 0.038) | **-2.45%** | **+6.61%** |
+
+Read this honestly:
+
+- **126 sessions is a clear improvement** and it is the horizon that matters —
+  this strategy holds for the LTCG clock, not for a month. In-sample it was
+  p 0.001; out-of-sample p 0.038. Same sign, same horizon, both datasets.
+- **21 and 63 sessions did not improve on rank correlation.** At 21d the new
+  score's IC is actually *worse* than the old one, while its quintile spread
+  is better — which means the relationship is not monotone there: the extremes
+  behave and the middle does not. Neither horizon was ever significant.
+- **Strictly, it narrowly fails a clean bar.** Three pre-specified comparisons
+  means a Bonferroni threshold of 0.033; the holdout's 0.038 misses it. The
+  case rests on in-sample and holdout agreeing, not on the holdout alone.
+
+**The limitation that matters most.** The revised score works *in rising
+markets only*:
+
+| 126 sessions | old | new |
+|---|---|---|
+| market rose | -0.009 | **+0.044** (p 0.016) |
+| market fell | -0.078 (p 0.003) | -0.034 (n.s.) |
+
+The new score is better in both regimes — it repairs a significantly *harmful*
+ranking during drawdowns into merely a useless one — but it is never
+positive when the market falls. **Do not treat the ranking as informative
+during a market drawdown.** The obvious next step, not yet built, is a
+market-level regime filter; the per-stock 200-DMA gate does not supply one.
+
+`tests/test_screen_scoring.py` pins the directional properties (monotone
+depth, DMA distance outweighing depth, RSI capped, delivery's weight
+preserved, ATR absent) so the weights can be tuned but not silently inverted.
+That gap was real: the old weights survived a full rewrite without breaking a
+single one of the 272 existing tests.
 
 ## Open questions
 
