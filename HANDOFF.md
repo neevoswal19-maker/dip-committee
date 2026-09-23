@@ -3,7 +3,7 @@
 For a fresh session picking this project up. Written so nothing here has to be
 re-derived.
 
-Last updated: 2026-09-23 (committee built)
+Last updated: 2026-09-23 (deployment layer built, not yet deployed)
 
 ---
 
@@ -19,7 +19,7 @@ SEBI-registered adviser.** Every verdict screen and alert carries that line.
 Keep it that way.
 
 Run it: `.venv/Scripts/python.exe -m streamlit run app.py`
-Test it: `.venv/Scripts/python.exe -m pytest tests/ -q` (208 passing)
+Test it: `.venv/Scripts/python.exe -m pytest tests/ -q` (250 passing)
 
 Windows, Python 3.12, venv at `.venv`. Machine has 7.7 GB RAM and no
 dedicated GPU — **a local LLM is not viable here**, don't propose one.
@@ -109,6 +109,18 @@ Don't re-estimate these; they came from real data.
   matches a bare "quarter", and an auditor *change* is separated from an
   auditor *resignation*. After the fix: flags 12-18 → 0-4, news desk -1.30 →
   -0.57, conviction +2 to +4. Regression tests in `TestEventTaxonomy`.
+- **The access gate failed open.** `is_deployed()` keyed on `DATABASE_URL`
+  being set, so deploying with `DASHBOARD_PASSWORD` configured but that one
+  missing served the portfolio publicly with no password - the opposite of
+  what its docstring claimed. It now assumes deployed unless proven local and
+  requires `ALLOW_INSECURE_LOCAL=1` for the open path.
+  `dashboard_access_mode()` returns open/password/**refuse**, three states, so
+  "no password configured" is distinguishable from "no password needed".
+  Regression tests in `tests/test_access.py`.
+- **A 404 was retried three times.** `cached_fetch` treated a missing bhavcopy
+  (market holiday, or not yet published) as a transient failure: twelve wasted
+  seconds and ERROR lines for something working correctly. `cache.NotFound` now
+  short-circuits the retry loop.
 - **Red flags were double-counted.** The Bear Case Analyst re-emits other bots'
   flags with the source prefixed, so each arrived twice. The count feeds the
   sizing band's red-flag test, so a duplicate could shrink a position for no
@@ -201,8 +213,27 @@ multi-stock work (500 stocks: 45s vs 37min).
   `sizing.size_position` and `exit.build_doctrine`, so there is one
   implementation of how much to buy.
 
+- **Deployment layer.** `src/alerts/telegram.py`, `jobs/daily_scan.py`,
+  `jobs/keepalive.py`, and both GitHub Actions workflows. Built and dry-run
+  locally; nothing is deployed yet.
+
+**Deployment decisions already made**
+- Public GitHub repo, Neon Postgres, Streamlit Community Cloud, GitHub Actions
+  cron at 19:00 IST weekdays, Telegram alerts.
+- Alerts fire on committee **BUY only** (conviction >= 60), plus every EXIT and
+  TRIM on holdings, LTCG deadlines weekly, and scan failures. A WATCH does not
+  alert - the committee declining to recommend should not train you to act.
+- **pg8000, not psycopg2.** psycopg2's compiled extension is blocked by
+  Application Control on the dev machine. pg8000 is pure Python and works in
+  both places. `config.database_url()` rewrites the scheme to
+  `postgresql+pg8000://` and strips libpq's `?sslmode=require`, which pg8000
+  rejects; TLS is applied through `connect_args` in `db.get_engine()` instead.
+  Stripping it there and not applying it here would connect in the clear.
+- **Requirements are pinned**, not ranged. Streamlit Cloud resolves fresh on
+  every rebuild.
+
 **Not started**
-- Telegram alerts (`src/alerts/telegram.py`)
+- Nothing is actually deployed - see "Deploying" below (`src/alerts/telegram.py`)
 - Scheduled daily scan (`.github/workflows/`, `jobs/`)
 - The self-learning loop (`src/learning/`) — schema exists, no code
 - Deployment to Streamlit Cloud + Postgres
@@ -234,3 +265,36 @@ multi-stock work (500 stocks: 45s vs 37min).
   bias is worse than none.
 - Design skills in the owner's CLAUDE.md apply to frontend work — see the table
   there for which skill covers what.
+
+
+---
+
+## Deploying
+
+Everything code-side is done and committed. What remains needs the owner's
+accounts, in this order:
+
+1. **Push** - create a public GitHub repo, `git remote add origin ...`,
+   `git push -u origin main`. One commit exists already.
+2. **Neon** - create a project, copy the connection string.
+3. **Backfill** - with `DATABASE_URL` set locally, run
+   `python -c "from src.data import nse; print(nse.backfill_delivery_bars(90))"`
+   so the first cloud scan reads delivery from the database instead of making
+   sixty NSE requests.
+4. **Telegram** - create a bot via @BotFather, message it, get the chat id from
+   `api.telegram.org/bot<TOKEN>/getUpdates`.
+5. **Secrets** - the same four in both GitHub repository secrets and Streamlit
+   Advanced settings: `DATABASE_URL`, `DASHBOARD_PASSWORD`,
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+6. **Streamlit Cloud** - deploy from the repo, main file `app.py`.
+7. **Verify** - trigger the Daily scan workflow manually from the Actions tab,
+   confirm a Telegram message arrives, open the app and check the password
+   gate holds and the candidates match.
+
+`python jobs/keepalive.py` answers "is the deployed system still working" and
+names what is wrong rather than just failing.
+
+**Still untested: Postgres.** Every test so far has run on SQLite. Run the
+suite once with `DATABASE_URL` pointing at Neon before trusting the deployment
+- booleans, `nulls_last()` in `scan.candidates_for` and the JSON-in-Text
+columns are the things most likely to differ.
