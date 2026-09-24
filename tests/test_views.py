@@ -8,6 +8,8 @@ caught before the owner sees it. Only pages that need no network are here.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine
 
@@ -27,7 +29,8 @@ def fresh_db(tmp_path, monkeypatch):
 def _render(page: str):
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file(page, default_timeout=60)
+    root = Path(__file__).resolve().parent.parent
+    at = AppTest.from_file(str(root / page), default_timeout=60)
     at.run()
     return at
 
