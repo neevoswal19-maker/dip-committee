@@ -278,7 +278,13 @@ def main() -> int:
         # Trades reported by message since the last run, so the exit rules
         # below see what is actually held.
         log.info("--- Telegram inbox")
-        telegram_inbox.process_pending(cfg)
+        if args.no_alerts:
+            # With sending switched off, the confirmations would be dropped
+            # while the trades were still recorded - the owner would never
+            # know. A silent run leaves their messages for the inbox job.
+            log.info("Skipped: alerts are off, so replies could not be sent")
+        else:
+            telegram_inbox.process_pending(cfg)
 
         # Fetched now, sent after the hold with the other alerts. A failure
         # here must not cost the morning's scan.
