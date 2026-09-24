@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import committee as committee_module
 from src import db, portfolio, scan
-from src.alerts import telegram, telegram_inbox
+from src.alerts import holdings_news, telegram, telegram_inbox
 from src.strategy import regime as regime_rules
 from src.config import load_config
 from src.data import nse, prices
@@ -172,6 +172,32 @@ def alert_on_buys(cfg) -> list[str]:
     return sent
 
 
+#: A scan this size is a full Nifty 500 run. A --limit test scan is smaller
+#: and must not count as the morning's scan.
+FULL_SCAN_MIN_UNIVERSE = 400
+
+
+def already_scanned(session) -> bool:
+    """Whether a full scan of `session` has already completed.
+
+    Two triggers start the morning run - an external timer at 07:40 and
+    GitHub's own schedule as a backup, which can arrive hours late - so the
+    second one to run must find the work done and stop. Rescanning mid-morning
+    would read intraday prices as if they were a closing session.
+    """
+    from sqlalchemy import select
+
+    with db.connection() as conn:
+        row = conn.execute(
+            select(db.scans.c.id)
+            .where(db.scans.c.status == "complete")
+            .where(db.scans.c.trade_date == session)
+            .where(db.scans.c.universe_size >= FULL_SCAN_MIN_UNIVERSE)
+            .limit(1)
+        ).first()
+    return row is not None
+
+
 def hold_until(send_at: str | None) -> None:
     """Sleep until `send_at` (HH:MM, IST) if it is still ahead.
 
@@ -206,6 +232,8 @@ def main() -> int:
                         help="send the morning summary (scheduled runs always do)")
     parser.add_argument("--send-at", default=None, metavar="HH:MM",
                         help="hold every Telegram message until this IST time")
+    parser.add_argument("--once-per-session", action="store_true",
+                        help="do nothing if this session has already been fully scanned")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -214,6 +242,12 @@ def main() -> int:
     # Fails loudly rather than shipping credentials over plaintext. See
     # db.assert_encrypted for why this cannot be assumed.
     db.assert_encrypted()
+
+    if args.once_per_session:
+        session = nse.last_completed_session()
+        if already_scanned(session):
+            log.info("The %s session has already been scanned; nothing to do", session)
+            return 0
 
     if args.no_alerts:
         telegram.send = lambda *a, **k: False  # type: ignore[assignment]
@@ -241,6 +275,16 @@ def main() -> int:
         log.info("--- Telegram inbox")
         telegram_inbox.process_pending(cfg)
 
+        # Fetched now, sent after the hold with the other alerts. A failure
+        # here must not cost the morning's scan.
+        log.info("--- news on holdings")
+        try:
+            news_flags, news_unchecked = holdings_news.find(cfg)
+        except Exception:
+            log.exception("The holdings news check failed")
+            news_flags, news_unchecked = [], None
+        log.info("%d serious item(s) found on holdings", len(news_flags))
+
         hold_until(args.send_at)
 
         log.info("--- alerting on BUY verdicts")
@@ -250,6 +294,9 @@ def main() -> int:
         log.info("--- checking holdings")
         exits = check_holdings(cfg)
         log.info("Sent %d holding alert(s)", len(exits))
+
+        news_sent = holdings_news.send(news_flags, cfg)
+        log.info("Sent %d holding news alert(s)", news_sent)
 
         log.info("--- market regime")
         market = regime_rules.current(cfg)
@@ -280,6 +327,7 @@ def main() -> int:
                     summary, enriched, cfg, market=market.to_dict(),
                     buy_alerts=buys, holding_alerts=len(exits),
                     holdings=len(portfolio.open_positions(cfg=cfg)),
+                    news_sent=news_sent, news_unchecked=news_unchecked,
                 ),
                 alert_type="scan_summary",
                 dedupe_key=f"summary|{date.today().isoformat()}",

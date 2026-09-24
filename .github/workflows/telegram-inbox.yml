@@ -4,7 +4,10 @@ on:
   schedule:
     # Every 15 minutes, every day. Telegram keeps unread messages for only 24
     # hours, so a purchase reported on a Saturday must still be read before
-    # Sunday. GitHub often starts scheduled runs a few minutes late.
+    # Sunday. GitHub actually ran this every 2-3 hours in practice, so an
+    # external timer (cron-job.org) also triggers it every 15 minutes
+    # through workflow_dispatch. Duplicate runs are harmless: each message is
+    # claimed in the database before it is acted on.
     - cron: "*/15 * * * *"
   workflow_dispatch:
 

@@ -253,6 +253,8 @@ def scan_summary(
     buy_alerts: list[str] | None = None,
     holding_alerts: int = 0,
     holdings: int = 0,
+    news_sent: int = 0,
+    news_unchecked: list[str] | None = None,
 ) -> str:
     """The morning summary, sent every scheduled run.
 
@@ -307,6 +309,21 @@ def scan_summary(
             )
     else:
         lines.append("No holdings recorded.")
+
+    if holdings:
+        # None means the whole check failed; a list names the holdings it
+        # could not reach. Neither may read as "no bad news".
+        if news_unchecked is None:
+            lines.append("News check on your holdings couldn't run this morning.")
+        elif news_sent:
+            lines.append(
+                f"{news_sent} serious news item{'s' if news_sent != 1 else ''} on your "
+                f"holdings, sent above."
+            )
+        else:
+            lines.append("No serious news on your holdings in the last 4 days.")
+        if news_unchecked:
+            lines.append(f"Couldn't reach news for: {_escape(', '.join(news_unchecked))}.")
 
     lines.extend(["", f"<i>{_escape(_disclaimer(cfg))}</i>"])
     return "\n".join(lines)

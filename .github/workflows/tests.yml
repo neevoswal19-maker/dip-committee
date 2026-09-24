@@ -1,0 +1,36 @@
+name: Tests
+
+# Runs the suite on Linux on every push, and on demand. It also stands in for
+# local runs when Windows Smart App Control blocks a compiled library on the
+# development machine, as it did with pandas on 2026-09-24 (and psycopg2 and
+# scipy before that).
+on:
+  push:  # every branch, so work can be tested before it reaches main
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # No secrets: the suite runs on a throwaway SQLite database, and every
+      # network call it makes is stubbed.
+      - name: Run the tests
+        run: python -m pytest tests/ -q

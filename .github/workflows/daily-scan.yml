@@ -2,6 +2,11 @@ name: Daily scan
 
 on:
   schedule:
+    # Backup only: an external timer starts the real run at 07:40 IST, since
+    # GitHub starts scheduled runs late (4h24m late was measured on
+    # 2026-09-23). If this fires first it does the work and the timer's run
+    # stops, and vice versa.
+    #
     # Messages arrive at 08:00 IST, Monday to Friday, before the 09:15 open,
     # covering the previous session (Monday's covers Friday).
     #
@@ -24,6 +29,10 @@ on:
         default: false
       summary:
         description: "Send a summary even if nothing was found"
+        type: boolean
+        default: false
+      morning:
+        description: "Run as the morning scan: hold messages until 08:00 IST, send the summary, skip if already done"
         type: boolean
         default: false
 
@@ -79,10 +88,14 @@ jobs:
           if [ "${{ github.event.inputs.summary }}" = "true" ]; then
             ARGS="$ARGS --summary"
           fi
-          # Only the scheduled run waits for 08:00. A manual run sends as
-          # soon as it finishes.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            ARGS="$ARGS --send-at 08:00 --summary"
+          # The morning run is started two ways: by an external timer
+          # (cron-job.org, 07:40 IST, workflow_dispatch with morning=true),
+          # which GitHub starts within about a minute, and by the schedule
+          # above as a backup, which GitHub can start hours late. Whichever
+          # runs second finds the session scanned and stops. A manual run
+          # from the Actions tab does neither and sends when it finishes.
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.morning }}" = "true" ]; then
+            ARGS="$ARGS --send-at 08:00 --summary --once-per-session"
           fi
           python jobs/daily_scan.py $ARGS
 
