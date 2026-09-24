@@ -529,7 +529,7 @@ def record_trade(
         position_id = find_open_position(symbol, strategy)
         if position_id is None:
             if side == "SELL":
-                raise LedgerError(f"cannot sell {symbol}: no open {LABELS.get(strategy, strategy)} position")
+                raise LedgerError(f"cannot sell {symbol}: no open position ({LABELS.get(strategy, strategy)})")
             if not create_if_missing:
                 raise LedgerError(f"no open position for {symbol}")
             position_id = create_position(symbol, strategy=strategy)
