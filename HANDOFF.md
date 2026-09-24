@@ -586,6 +586,100 @@ cron-job.org and has an expiry date.
   second morning trigger exit without doing anything, and inbox duplicates are
   harmless because each message is claimed before it's acted on.
 
+## Strategy research, labels, and the learning loop (2026-09-24)
+
+### Swing trading: researched, rejected
+Six published rules (RSI(2), cumulative RSI(2), Double 7s, IBS, TPS, Nifty
+5-day losers) × nine stop/target plans, on the Nifty 50. Plans were chosen on
+2014-21 and tested untouched on 2022+, on the Nifty Next 50, and as a 5-slot
+₹50k portfolio. Report: `reports/strategy_research.md`. Re-run it with the
+`strategy-research` workflow (it runs on GitHub, ~3 minutes, no secrets).
+- The win rates were real (59-71%), but **after Groww delivery costs
+  (~0.46% a trade including slippage) profit factors were 0.92-1.14**,
+  against 1.38-1.46 before costs. Every portfolio fell further than holding
+  the Nifty 50 (−23% to −47% against −16.5%). None passed, so
+  `swing.enabled: false`. **Don't enable swing without re-running the
+  research.**
+- The sanity check (RSI(2) on the Nifty 50 index, before costs) came out at
+  a 65% win rate and profit factor 1.64, so the simulator is fine.
+- Taking the *most oversold* signal first made portfolios worse (RSI(2):
+  −0.30% per portfolio trade against +0.04% across all signals).
+
+### Long-term stop: now −25% (was 2.5×ATR)
+The 2.5×ATR stop the alerts used to show had never been backtested. Tested:
+
+| Plan | 2022+ CAGR | 2022+ worst fall | Win rate |
+|---|---|---|---|
+| 2.5×ATR stop (old) | 12.3% | −20.9% | 24% |
+| −25% stop (chosen) | 14.6% | −13.8% | 63% |
+| chandelier 3×ATR(22) | 5.1% | −27.6% | 36% |
+
+`sizing.stop_rule: pct`, `stop_pct: 25`. The sizer sizes against the real
+stop, and the −25% signal says EXIT, not REVIEW. `stop_rule: atr` restores
+the old behaviour, and its tests still run.
+
+### Simulator
+`src/strategy/simulator.py` supports:
+- next-open or same-close fills
+- resting stops and targets (the stop is assumed first when one bar touches both)
+- Groww charges on every fill, plus slippage
+- scale-ins and partial exits
+
+It is separate from `backtest.run_backtest`, which fills at the close,
+charges nothing, and is still used by the dashboard's Backtest page.
+
+### Labels and strategy on positions
+- Every alert header says `LONG-TERM` or `SWING`. The Telegram parser reads
+  both the new headers and the old ones.
+- `positions.strategy` and `committee_runs.strategy` were added to Neon by
+  the guarded migration in `db.init_db` (`COLUMN_MIGRATIONS`). NULL means
+  long-term.
+- One stock can only be in one strategy at a time, because FIFO would
+  otherwise sell the other strategy's shares.
+- `swing SBIN 10` records a swing trade. Swing positions are tracked but get
+  no exit alerts, because there's no tested swing exit.
+- "lt" is deliberately not a keyword: LT is a Nifty 50 symbol.
+
+### The learning loop (`src/learning/`, weekly `learn.yml`, Saturday)
+- `checkpoints`: every committee run's excess return vs the Nifty 500 at
+  30/90/180/365 days.
+- `scorecards`: IC per bot and desk, with a verdict (predictive / noise /
+  misleading / insufficient).
+- `weights`: desk weights, auto-applied, with these guardrails:
+  - 30 matured runs at 90 days before anything moves
+  - shrinkage 0.7 toward the current weight
+  - a 20% step limit
+  - the change must also improve IC on the most recent 30% of runs
+  - never rescaled to the old total, since that would break the step limit
+  - every version kept; rollback is on the Learning page
+
+  `committee.run` passes the active weights into `cmio.decide`.
+- `postmortem`: every closed trade (wins included) gets its captured
+  fraction, its alternative exits replayed on real prices, and which desks
+  were right. The result goes to `lessons` and a Telegram trade review.
+- `proposals`: rule changes, never applied automatically.
+  - Filed only when there are ≥8 reviewed trades and the alternative wins
+    by ≥2 points on average in ≥60% of trades.
+  - Approve on the Learning page. The next weekly run then opens a pull
+    request editing `config.yaml`, with the comments kept by
+    `proposals.set_scalar`.
+  - This needs "Allow GitHub Actions to create pull requests" turned on in
+    the repo settings. If it's off, the owner gets a Telegram message saying
+    so.
+- **Timing:** the first 30-day outcomes arrive about 22 October 2026. The
+  weights can't move until about 30 runs have 90-day outcomes (early 2027).
+  Until then the loop measures and reports only.
+- Not built: the swing decay guard. It's only needed if swing is ever
+  enabled.
+
+### Working without local pandas
+Smart App Control blocks pandas on the dev PC. So all testing happens on
+GitHub:
+- `tests.yml` runs on every push to every branch.
+- `tests/test_views.py` renders dashboard pages headlessly.
+- Build on a branch, and merge to `main` only when CI is green. The 7:40
+  morning job runs from `main`.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important
