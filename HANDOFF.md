@@ -555,6 +555,37 @@ previous session, so Monday's covers Friday.
   from NSE (404s aren't cached).
 - The Telegram inbox job still runs every 15 minutes, all day, independently.
 
+## External timer: cron-job.org (set up 2026-09-24)
+
+GitHub's own scheduler can't be relied on for timing on this free public
+repo. On 2026-09-23 the 19:00 scan started 4h24m late, and the "every 15
+minutes" inbox job ran every 2-3 hours. Both workflows are therefore also
+started from **cron-job.org** (the owner's account) through GitHub's
+`workflow_dispatch` API. Runs started that way were measured starting within
+the same second.
+
+| cron-job.org job | Schedule (Asia/Kolkata) | Target | Body |
+|---|---|---|---|
+| Morning Scan | Mon-Fri 07:40 | `daily-scan.yml/dispatches` | `{"ref":"main","inputs":{"morning":"true"}}` |
+| Telegram inbox | every 15 min | `telegram-inbox.yml/dispatches` | `{"ref":"main"}` |
+
+Both are POST requests with the headers `Accept: application/vnd.github+json`,
+`Authorization: Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28` and
+`Content-Type: application/json`. The token is a fine-grained PAT scoped to
+`dip-committee` with **Actions: Read and write** only. It lives only in
+cron-job.org and has an expiry date.
+
+- **Symptom of an expired token:** cron-job.org emails a failure, and the
+  morning summary arrives late or not at all, since GitHub's own schedule is
+  then the only trigger. Fix: generate a new token and paste it into both
+  jobs' Authorization header.
+- **A new cron-job.org job defaults to UTC**, and a Custom schedule's hour and
+  minute lists allow several selections at once (a stray "1" gave 01:01
+  during setup). Check that "Next execution" reads 7:40 AM.
+- GitHub's own schedules stay on as backups. `--once-per-session` makes the
+  second morning trigger exit without doing anything, and inbox duplicates are
+  harmless because each message is claimed before it's acted on.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important
