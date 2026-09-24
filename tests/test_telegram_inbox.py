@@ -447,12 +447,9 @@ def test_price_at_returns_none_when_nothing_answers(monkeypatch):
 # --- Two strategies -------------------------------------------------------------------
 
 
-NEW_BUY_ALERT = "LONG-TERM BUY: INDIANB
-Conviction 64/100"
-SWING_BUY_ALERT = "SWING BUY: SBIN
-Entry around Rs 800"
-LONG_TERM_EXIT = "LONG-TERM EXIT: INDIANB
-stop-loss"
+NEW_BUY_ALERT = "LONG-TERM BUY: INDIANB\nConviction 64/100"
+SWING_BUY_ALERT = "SWING BUY: SBIN\nEntry around Rs 800"
+LONG_TERM_EXIT = "LONG-TERM EXIT: INDIANB\nstop-loss"
 
 
 @pytest.mark.parametrize("text, reply, expected", [
@@ -464,8 +461,7 @@ stop-loss"
     ("INDIANB 30 long term", None, ("BUY", "INDIANB", 30, "long_term")),
     ("INDIANB 30", None, ("BUY", "INDIANB", 30, "long_term")),
     ("sold LT 10", None, ("SELL", "LT", 10, "long_term")),    # LT is a stock, not "long-term"
-    ("30", "BUY candidate: INDIANB
-old alert", ("BUY", "INDIANB", 30, "long_term")),
+    ("30", "BUY candidate: INDIANB\nold alert", ("BUY", "INDIANB", 30, "long_term")),
 ])
 def test_strategy_comes_from_the_alert_or_the_words(text, reply, expected):
     command = parse(text, reply)
