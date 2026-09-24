@@ -19,8 +19,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 import traceback
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,11 +52,20 @@ def store_todays_delivery(cfg, index: str | None = None) -> int:
     for rows nothing ever reads, and pg8000 charges one round trip per row
     against a database that may be on another continent.
     """
-    trade_date = nse.last_trading_day()
+    # The most recent published session. Walk back past holidays: a Thursday
+    # morning run after a Wednesday holiday finds Tuesday, which is already
+    # stored and skipped row by row, so walking back is always safe.
+    trade_date = nse.last_completed_session()
     result = nse.get_bhavcopy(trade_date)
+    for _ in range(4):
+        if result.value is not None:
+            break
+        log.info("No bhavcopy for %s (%s); trying the session before", trade_date, result.note)
+        trade_date = nse.last_trading_day(trade_date - timedelta(days=1))
+        result = nse.get_bhavcopy(trade_date)
 
     if result.value is None:
-        log.warning("No bhavcopy for %s (%s)", trade_date, result.note)
+        log.warning("No bhavcopy found in the last five sessions")
         return 0
 
     universe = nse.get_universe(index or cfg.get("universe.index", "NIFTY 500"))
@@ -162,6 +172,31 @@ def alert_on_buys(cfg) -> list[str]:
     return sent
 
 
+def hold_until(send_at: str | None) -> None:
+    """Sleep until `send_at` (HH:MM, IST) if it is still ahead.
+
+    The scheduled run starts early - GitHub starts cron jobs late, often by
+    ten minutes or more, and the scan itself takes about ten - so that every
+    message can go out at one fixed time instead of whenever the run happens
+    to finish. If the run is already past the time, nothing waits.
+    """
+    if not send_at:
+        return
+    hour, minute = (int(part) for part in send_at.split(":"))
+    now = db.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    delay = (target - now).total_seconds()
+    if delay <= 0:
+        log.info("Already past %s IST; sending now", send_at)
+        return
+    if delay > 3 * 3600:
+        # A mistyped time should not park the job until it times out.
+        log.warning("%s IST is more than three hours away; sending now instead", send_at)
+        return
+    log.info("Holding messages until %s IST (%.0f minutes)", send_at, delay / 60)
+    time.sleep(delay)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Daily scan and alert job")
     parser.add_argument("--index", default=None, help="universe, default from config")
@@ -169,6 +204,8 @@ def main() -> int:
     parser.add_argument("--no-alerts", action="store_true", help="run without sending anything")
     parser.add_argument("--summary", action="store_true",
                         help="send a summary even when there is nothing to report")
+    parser.add_argument("--send-at", default=None, metavar="HH:MM",
+                        help="hold every Telegram message until this IST time")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -199,14 +236,16 @@ def main() -> int:
             summary.passed_quality, summary.passed_delivery, summary.candidates,
         )
 
-        log.info("--- alerting on BUY verdicts")
-        buys = alert_on_buys(cfg)
-        log.info("Sent %d buy alert(s): %s", len(buys), buys or "none")
-
         # Trades reported by message since the last run, so the exit rules
         # below see what is actually held.
         log.info("--- Telegram inbox")
         telegram_inbox.process_pending(cfg)
+
+        hold_until(args.send_at)
+
+        log.info("--- alerting on BUY verdicts")
+        buys = alert_on_buys(cfg)
+        log.info("Sent %d buy alert(s): %s", len(buys), buys or "none")
 
         log.info("--- checking holdings")
         exits = check_holdings(cfg)
@@ -245,6 +284,7 @@ def main() -> int:
     except Exception as exc:
         log.exception("The daily scan failed")
         if not args.no_alerts:
+            hold_until(args.send_at)
             telegram.send(
                 telegram.failure(f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()[-800:]}"),
                 alert_type="scan_failure",

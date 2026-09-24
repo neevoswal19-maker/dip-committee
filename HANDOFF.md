@@ -279,7 +279,7 @@ multi-stock work (500 stocks: 45s vs 37min).
 
 **Deployment decisions already made**
 - Public GitHub repo, Neon Postgres, Streamlit Community Cloud, GitHub Actions
-  cron at 19:00 IST weekdays, Telegram alerts.
+  cron Mon-Fri, messages at 08:00 IST (see below), Telegram alerts.
 - Alerts fire on committee **BUY only** (conviction >= 60), plus every EXIT and
   TRIM on holdings, LTCG deadlines weekly, and scan failures. A WATCH does not
   alert - the committee declining to recommend should not train you to act.
@@ -533,6 +533,28 @@ phantom win or loss for the learning loop. It also left an empty position
 when the only buy was removed. Both are handled now, and this affects the
 dashboard's "Remove a transaction" as well.
 
+## Morning schedule (changed 2026-09-24)
+
+The scan used to run at 19:00 IST. At the owner's request it now delivers at
+**08:00 IST, Monday to Friday**, before the 09:15 open. Each run covers the
+previous session, so Monday's covers Friday.
+
+- **Why it starts at 07:17.** GitHub starts scheduled runs late, often by
+  10+ minutes and worst on the hour, and the scan takes about 10 minutes. The
+  job starts at 07:17 IST (`47 1 * * 1-5` UTC), and `--send-at 08:00` holds
+  every message, the failure alert included, until 08:00. A run that finishes
+  after 08:00 sends immediately. Manual runs never wait. `timeout-minutes` is 75.
+- **"Today" has no data in the morning.** `nse.last_completed_session()` is the
+  previous weekday before 19:00 IST and today after. Three places use it:
+  1. the delivery store, which walks back past holidays and skips rows it
+     already has;
+  2. the default end of `get_delivery_history`;
+  3. the scan's `trade_date`.
+  Before this fix, a morning run would have stored no delivery at all, and
+  every stock's history walk would have requested today's missing bhavcopy
+  from NSE (404s aren't cached).
+- The Telegram inbox job still runs every 15 minutes, all day, independently.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important
@@ -573,7 +595,7 @@ Live as of 2026-09-23. All of it on free tiers.
 | Repo | github.com/neevoswal19-maker/dip-committee (public) |
 | Database | Neon Postgres, ap-southeast-1, pooled endpoint |
 | Dashboard | Streamlit Community Cloud, **Python 3.12** |
-| Scheduled scan | GitHub Actions, 19:00 IST weekdays |
+| Scheduled scan | GitHub Actions, starts 07:17 IST Mon-Fri, messages held until 08:00 |
 | Alerts | Telegram @cmiostock_bot |
 
 Verified end to end: a real Actions run scanned 120 stocks in 320s, wrote to

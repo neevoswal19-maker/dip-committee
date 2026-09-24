@@ -2,10 +2,16 @@ name: Daily scan
 
 on:
   schedule:
-    # 19:00 IST on weekdays. GitHub cron is UTC, and IST is UTC+5:30, so
-    # 13:30 UTC. NSE publishes the day's bhavcopy from about 18:30 IST, so
-    # this leaves half an hour of slack.
-    - cron: "30 13 * * 1-5"
+    # Messages arrive at 08:00 IST, Monday to Friday, before the 09:15 open,
+    # covering the previous session (Monday's covers Friday).
+    #
+    # The run starts at 07:17 IST (01:47 UTC) and holds every message until
+    # 08:00 with --send-at. GitHub often starts scheduled runs late,
+    # especially on the hour, and the scan takes about ten minutes, so a run
+    # started at 08:00 would deliver at 08:10-08:45. 17 minutes past avoids
+    # the on-the-hour queue. If GitHub is very late the run sends as soon as
+    # it finishes.
+    - cron: "47 1 * * 1-5"
   workflow_dispatch:
     inputs:
       limit:
@@ -30,7 +36,8 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Scan (~10 min) plus holding until 08:00 (~30 min), with slack.
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +78,11 @@ jobs:
           fi
           if [ "${{ github.event.inputs.summary }}" = "true" ]; then
             ARGS="$ARGS --summary"
+          fi
+          # Only the scheduled run waits for 08:00. A manual run sends as
+          # soon as it finishes.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ARGS="$ARGS --send-at 08:00"
           fi
           python jobs/daily_scan.py $ARGS
 

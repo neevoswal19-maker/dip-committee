@@ -68,7 +68,7 @@ def run_scan(
         scan_id = conn.execute(
             db.scans.insert().values(
                 run_at=db.now(),
-                trade_date=nse.last_trading_day(),
+                trade_date=nse.last_completed_session(),
                 universe=index,
                 status="running",
             )
@@ -178,7 +178,7 @@ def run_scan(
 
         return ScanSummary(
             scan_id=scan_id,
-            trade_date=nse.last_trading_day(),
+            trade_date=nse.last_completed_session(),
             universe_size=summary["universe_size"],
             passed_dip=summary["passed_dip"],
             passed_quality=summary["passed_quality"],

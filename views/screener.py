@@ -56,7 +56,7 @@ with st.sidebar:
         st.info(
             "Scanning runs as a scheduled job, not in the app - a full universe scan "
             "is too heavy for the hosted instance. Trigger it from the repository's "
-            "**Actions** tab (Daily scan workflow), or wait for the 19:00 IST run."
+            "**Actions** tab (Daily scan workflow), or wait for the 08:00 IST run."
         )
 
     if st.button("Run scan", type="primary", use_container_width=True, disabled=deployed):

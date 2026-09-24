@@ -267,7 +267,7 @@ def get_delivery_history(
     never grow beyond what a single run could reach.
     """
     identity = StockIdentity(stock) if isinstance(stock, str) else stock
-    end_date = end or date.today()
+    end_date = end or last_completed_session()
 
     if use_database:
         stored = _delivery_from_db(identity.symbol, days, end_date)
@@ -729,6 +729,33 @@ def backfill_delivery_bars(days: int = 90, *, end: date | None = None) -> dict[s
         cursor -= timedelta(days=1)
 
     return {"sessions": sessions, "bars_stored": stored}
+
+
+#: NSE publishes the day's full bhavcopy around 18:00-18:30 IST. Before this
+#: hour, today's session is treated as not yet available.
+BHAVCOPY_READY_HOUR_IST = 19
+
+
+def last_completed_session(now: datetime | None = None) -> date:
+    """The most recent weekday whose bhavcopy should already be published.
+
+    The scan runs at 07:17 IST, before the market opens, so "today" has no
+    data yet. Asking for it wastes a request per stock (a 404 is not cached)
+    and, worse, made the evening delivery store find nothing. Before 19:00 IST
+    this is the previous weekday; from 19:00, today. Holidays are not known
+    here - callers walk back past a missing file, as with last_trading_day.
+
+    `now` is IST, naive. It defaults to db.now(), not datetime.now(), because
+    the job runs on a UTC machine.
+    """
+    if now is None:
+        from src import db
+
+        now = db.now()
+    day = now.date()
+    if now.hour < BHAVCOPY_READY_HOUR_IST:
+        day -= timedelta(days=1)
+    return last_trading_day(day)
 
 
 def last_trading_day(reference: date | None = None) -> date:
