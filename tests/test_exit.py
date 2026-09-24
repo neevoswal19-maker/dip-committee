@@ -128,12 +128,32 @@ class TestTrailingStop:
         assert position.peak_price == 160.0
 
 
+class _Override:
+    def __init__(self, base, **overrides):
+        self._base, self._over = base, overrides
+
+    def get(self, key, default=None):
+        return self._over[key] if key in self._over else self._base.get(key, default)
+
+
 class TestHardStop:
-    def test_forces_review_rather_than_an_automatic_sale(self, cfg, position):
-        signals = ex.evaluate(position, 70.0, cfg)    # -30%
+    def test_under_the_atr_rule_it_forces_a_review_not_a_sale(self, cfg, position):
+        atr_cfg = _Override(cfg, **{"sizing.stop_rule": "atr"})
+        signals = ex.evaluate(position, 70.0, atr_cfg)    # -30%
         hard = [s for s in signals if s.rule == "hard_stop"]
         assert hard
-        assert hard[0].action == "REVIEW", "a hard stop must not auto-sell a thesis that is intact"
+        assert hard[0].action == "REVIEW"
+
+    def test_the_researched_25_percent_stop_sells(self, cfg, position):
+        assert cfg.get("sizing.stop_rule") == "pct"
+        signals = ex.evaluate(position, 74.0, cfg)        # -26%
+        hard = [s for s in signals if s.rule == "hard_stop"]
+        assert hard and hard[0].action == "EXIT"
+        assert not [s for s in signals if s.rule == "initial_stop"]
+
+    def test_nothing_fires_above_the_stop(self, cfg, position):
+        signals = ex.evaluate(position, 80.0, cfg)        # -20%
+        assert not [s for s in signals if s.rule in ("hard_stop", "initial_stop")]
 
 
 class TestTax:

@@ -362,8 +362,17 @@ def size_position(
     risk_pct = float(spec.get("risk_per_position_pct", 1.5))
     multiplier = float(cfg.get("sizing.atr_stop_multiplier", 2.5))
     risk_amount = portfolio.capital * risk_pct / 100.0
+    stop_rule = str(cfg.get("sizing.stop_rule", "atr")).lower()
 
-    if atr and atr > 0:
+    if stop_rule == "pct":
+        # The stop the alert quotes is the stop the size is built on. Sizing
+        # to a tighter stop than the one actually used would put several
+        # times the stated risk on the table.
+        stop_distance = price * float(cfg.get("sizing.stop_pct", 25.0)) / 100.0
+        decision.stop_price = round(price - stop_distance, 2)
+        atr_shares = risk_amount / stop_distance
+        decision.atr_value = atr_shares * price
+    elif atr and atr > 0:
         stop_distance = atr * multiplier
         decision.stop_price = round(price - stop_distance, 2)
         atr_shares = risk_amount / stop_distance

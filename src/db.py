@@ -145,6 +145,9 @@ committee_runs = Table(
     Column("dissent", Text),
     # The weight set in force, so attribution can compare across versions
     Column("weights_version", Integer),
+    # long_term | swing: which question the committee was answering. NULL on
+    # runs from before swing trading existed, which were all long-term.
+    Column("strategy", String(16)),
     Column("cost_usd", Float),
     Column("cache_read_tokens", Integer),
     Column("input_tokens", Integer),
@@ -202,6 +205,9 @@ positions = Table(
     Column("exit_reason", String(128)),
     Column("realised_pnl", Float),
     Column("notes", Text),
+    # long_term | swing. Nullable because it was added to a live database;
+    # a NULL is an older position and counts as long-term.
+    Column("strategy", String(16)),
     Index("ix_positions_status", "status"),
 )
 
@@ -411,6 +417,37 @@ alerts_sent = Table(
     Column("error", Text),
 )
 
+# Every swing signal the morning scan found, alerted or not. The ones that
+# were blocked are kept with the reason, and every one is later scored
+# against what the price actually did - the live record the decay guard
+# compares with the backtest.
+swing_signals = Table(
+    "swing_signals", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", DateTime, default=now),
+    Column("signal_date", Date, nullable=False),        # the session the signal closed on
+    Column("symbol", String(32), nullable=False),
+    Column("rule", String(32), nullable=False),
+    Column("plan", String(64)),
+    Column("close", Float),                             # the signal bar's close
+    Column("atr", Float),
+    Column("stop", Float),
+    Column("target", Float),
+    Column("target_note", Text),
+    Column("max_hold", Integer),
+    Column("rank", Float),
+    Column("status", String(16)),     # alerted | blocked | no_slot
+    Column("block_reason", Text),
+    Column("committee_run_id", Integer, ForeignKey("committee_runs.id")),
+    Column("conviction", Float),
+    Column("outcome_return_pct", Float),   # filled once the trade would have closed
+    Column("outcome_exit", String(32)),
+    Column("outcome_at", Date),
+    UniqueConstraint("signal_date", "symbol", "rule", name="uq_swing_signal"),
+    Index("ix_swing_signals_date", "signal_date"),
+)
+
+
 # Messages sent *to* the bot. Each Telegram update is claimed here before it
 # is acted on, and update_id is unique, so the 15-minute job and a dashboard
 # page load cannot both record the same purchase.
@@ -510,10 +547,45 @@ def assert_encrypted() -> bool:
         raw.close()
 
 
+#: Columns added to tables that already exist in deployed databases.
+#: `create_all` creates missing tables but never alters existing ones, so each
+#: new column on an old table is listed here and added on startup. Only
+#: nullable columns belong here - old code must keep working against them.
+COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("positions", "strategy", "VARCHAR(16)"),
+    ("committee_runs", "strategy", "VARCHAR(16)"),
+)
+
+
+def _migrate(engine: Engine) -> list[str]:
+    """Add any column in COLUMN_MIGRATIONS that the database lacks.
+
+    Checks first and alters only what is missing, so it is safe to run on
+    every start, on SQLite and on Postgres alike.
+    """
+    from sqlalchemy import inspect, text
+
+    added: list[str] = []
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    for table, column, sql_type in COLUMN_MIGRATIONS:
+        if table not in tables:
+            continue   # create_all has just made it, with the column
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        if column in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+        added.append(f"{table}.{column}")
+        log.info("Added column %s.%s", table, column)
+    return added
+
+
 def init_db(drop: bool = False) -> None:
     engine = get_engine()
     if drop:
         metadata.drop_all(engine)
+    _migrate(engine)
     metadata.create_all(engine)
 
     if engine.url.get_backend_name() == "sqlite":

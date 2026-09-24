@@ -51,8 +51,12 @@ SELL_WORDS = {"sell", "sold", "s", "exit", "exited", "trim", "trimmed"}
 FILLER = {
     "shares", "share", "qty", "quantity", "of", "x", "units", "unit", "nos",
     "stock", "stocks", "i", "have", "just", "today", "rs", "inr", "the", "a",
-    "an", "my", "for", "at", "market", "more", "some", "in",
+    "an", "my", "for", "at", "market", "more", "some", "in", "trade", "position",
 }
+#: Words that say which strategy a trade belongs to.
+SWING_WORDS = {"swing"}
+# Not "lt": LT (Larsen & Toubro) is a Nifty 50 symbol.
+LONG_TERM_WORDS = {"long-term", "longterm", "long"}   # "long term" splits into two
 UNDO_WORDS = {"undo", "/undo"}
 HOLDINGS_WORDS = {"holdings", "portfolio", "positions", "/holdings", "/portfolio"}
 HELP_WORDS = {"help", "/help", "/start", "start", "?"}
@@ -60,7 +64,9 @@ HELP_WORDS = {"help", "/help", "/start", "start", "?"}
 #: The first line of an alert this system sent, as Telegram hands it back in
 #: `reply_to_message.text` - plain text, the HTML already stripped.
 REPLY_HEADER = re.compile(
-    r"^\s*(BUY candidate|EXIT|TRIM|REVIEW|HOLD|Tax deadline)\s*:\s*([A-Z0-9][A-Z0-9&\-]*)"
+    r"^\s*(?:(SWING|LONG-TERM)\s+)?"
+    r"(BUY candidate|BUY|EXIT|TRIM|REVIEW|HOLD|TAX DEADLINE|Tax deadline)"
+    r"\s*:\s*([A-Z0-9][A-Z0-9&\-]*)"
 )
 PRICE = re.compile(r"(?:@|\bat\b)\s*(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)", re.I)
 TOKEN = re.compile(r"\d+[A-Za-z][A-Za-z0-9&\-]*|[A-Za-z][A-Za-z0-9&\-]*|\d+(?:\.\d+)?")
@@ -70,7 +76,8 @@ HELP = (
     "<b>INDIANB 30</b> - bought 30\n"
     "<b>sold INDIANB 30</b> - sold 30\n"
     "<b>30</b> as a reply to an alert - that alert's stock\n"
-    "<b>INDIANB 30 @ 842.50</b> - with the exact price\n\n"
+    "<b>INDIANB 30 @ 842.50</b> - with the exact price\n"
+    "<b>swing INDIANB 30</b> - record it as a swing trade (the default is long-term)\n\n"
     "Without a price I use the market price at the minute you sent it, and "
     "your Groww import later replaces it with the real fill.\n\n"
     "<b>undo</b> - reverse the last trade recorded here\n"
@@ -88,6 +95,7 @@ class Command:
     symbol: str | None = None
     quantity: int | None = None
     price: float | None = None      # set only when the owner typed one
+    strategy: str = "long_term"     # long_term | swing
 
 
 @dataclass
@@ -120,9 +128,16 @@ def parse(text: str | None, reply_to_text: str | None = None) -> Command | Probl
     side: str | None = None
     symbols: list[str] = []
     numbers: list[str] = []
+    stated_strategy: str | None = None
 
     for token in TOKEN.findall(raw):
         word = token.lower()
+        if word in SWING_WORDS:
+            stated_strategy = "swing"
+            continue
+        if word in LONG_TERM_WORDS or word == "term":
+            stated_strategy = stated_strategy or "long_term"
+            continue
         if word in BUY_WORDS or word in SELL_WORDS:
             this = "BUY" if word in BUY_WORDS else "SELL"
             if side and side != this:
@@ -159,11 +174,13 @@ def parse(text: str | None, reply_to_text: str | None = None) -> Command | Probl
     if len(symbols) > 1:
         return Problem(f"Which stock? I read {', '.join(symbols[:3])}.")
 
-    replied_symbol, replied_side, replied_label = None, None, None
+    replied_symbol, replied_side, replied_label, replied_strategy = None, None, None, None
     header = REPLY_HEADER.match(reply_to_text or "")
     if header:
-        replied_label, replied_symbol = header.group(1), header.group(2)
-        replied_side = {"BUY candidate": "BUY", "EXIT": "SELL", "TRIM": "SELL"}.get(replied_label)
+        prefix, replied_label, replied_symbol = header.group(1), header.group(2), header.group(3)
+        replied_side = {"BUY candidate": "BUY", "BUY": "BUY", "EXIT": "SELL",
+                        "TRIM": "SELL"}.get(replied_label)
+        replied_strategy = "swing" if prefix == "SWING" else "long_term"
 
     if symbols:
         symbol = symbols[0]
@@ -184,7 +201,9 @@ def parse(text: str | None, reply_to_text: str | None = None) -> Command | Probl
             f"<b>INDIANB {quantity}</b>."
         )
 
-    return Command("trade", side=side, symbol=symbol, quantity=quantity, price=price)
+    strategy = stated_strategy or (replied_strategy if symbol == replied_symbol else None) or "long_term"
+    return Command("trade", side=side, symbol=symbol, quantity=quantity, price=price,
+                   strategy=strategy)
 
 
 # --- Acting --------------------------------------------------------------------
@@ -233,6 +252,10 @@ def _position_context(symbol: str, price: float, trade_date: Any, cfg: Any) -> d
             stop_price=stop,
         )
 
+    if str(cfg.get("sizing.stop_rule", "atr")).lower() == "pct":
+        # The researched stop, from the actual fill rather than the committee's quote.
+        stop = round(price * (1 - float(cfg.get("sizing.stop_pct", 25.0)) / 100.0), 2)
+        context["stop_price"] = stop
     context["exit_doctrine"] = exit_rules.build_doctrine(
         symbol, price, cfg, stop_price=stop, entry_date=trade_date
     ).to_dict()
@@ -262,12 +285,30 @@ def _trade(command: Command, update_id: int, message_at: datetime, cfg: Any) -> 
         price, how = found
         estimated = True
 
-    position_id = pf.find_open_position(symbol)
+    strategy = command.strategy
+    label = pf.LABELS.get(strategy, strategy)
+    if side == "SELL":
+        # A sale goes to whichever strategy actually holds the stock, unless
+        # the owner named one.
+        held_in = pf.open_strategy_for(symbol)
+        if held_in and strategy != held_in and command.strategy == "long_term":
+            strategy, label = held_in, pf.LABELS.get(held_in, held_in)
+    position_id = pf.find_open_position(symbol, strategy)
     created = False
     if side == "SELL" and position_id is None:
-        return "rejected", None, f"You don't hold any {telegram._escape(symbol)}, so there's nothing to sell. Nothing was recorded."
+        return "rejected", None, (
+            f"You don't hold any {telegram._escape(symbol)} as a {label} position, so there's "
+            f"nothing to sell. Nothing was recorded."
+        )
     if side == "BUY" and position_id is None:
-        position_id = pf.create_position(symbol, **_position_context(symbol, price, trade_date, cfg))
+        try:
+            if strategy == "swing":
+                position_id = pf.create_position(symbol, strategy="swing",
+                                                 notes="Recorded from Telegram as a swing trade.")
+            else:
+                position_id = pf.create_position(symbol, **_position_context(symbol, price, trade_date, cfg))
+        except pf.LedgerError as exc:
+            return "rejected", None, f"{telegram._escape(str(exc))} Nothing was recorded."
         created = True
 
     note = f"From Telegram. Price {'estimated: ' + how if estimated else 'as given in the message'}."
@@ -275,7 +316,7 @@ def _trade(command: Command, update_id: int, message_at: datetime, cfg: Any) -> 
         _, state = pf.record_trade(
             symbol, side, trade_date, quantity, price,
             position_id=position_id, order_id=f"tg-{update_id}",
-            source="telegram", notes=note, cfg=cfg,
+            source="telegram", notes=note, cfg=cfg, strategy=strategy,
         )
     except pf.LedgerError as exc:
         if created:
@@ -302,7 +343,7 @@ def _trade(command: Command, update_id: int, message_at: datetime, cfg: Any) -> 
         position = f"Position closed. Realised {_rs(state.realised_gain)} after charges."
 
     reply = (
-        f"<b>Recorded: {side} {quantity} {telegram._escape(symbol)}</b> at {_rs(price)} "
+        f"<b>Recorded ({label}): {side} {quantity} {telegram._escape(symbol)}</b> at {_rs(price)} "
         f"({telegram._escape(price_note)}), charges {_rs(charges)}.\n"
         f"{position}\n\n"
         f"Wrong? Reply <b>undo</b>. To fix just the price, undo and resend as "
@@ -366,8 +407,8 @@ def _holdings(cfg: Any) -> tuple[str, int | None, str]:
     lines = ["<b>Holdings</b>"]
     for state in states:
         lines.append(
-            f"{telegram._escape(state.symbol)}: {state.quantity:g} shares, "
-            f"average cost {_rs(state.avg_cost)}"
+            f"{telegram._escape(state.symbol)} ({pf.LABELS.get(state.strategy, state.strategy)}): "
+            f"{state.quantity:g} shares, average cost {_rs(state.avg_cost)}"
         )
     lines.append(f"\nInvested: {_rs(sum(s.invested for s in states))}")
     return "answered", None, "\n".join(lines)

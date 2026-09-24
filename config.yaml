@@ -90,6 +90,35 @@ ownership:
   institutional_exit_alarm_pct: 2.0
 
 # ---------------------------------------------------------------------------
+# SWING TRADING - researched 2026-09-24, NOT switched on.
+#
+# Six published rules (Connors RSI(2), cumulative RSI(2), Double 7s, IBS, TPS
+# and a Nifty 5-day-losers reversal), each with nine stop/target plans, on
+# the Nifty 50. Plans were chosen on 2014-21 and tested untouched on 2022+
+# and on the Nifty Next 50, after Groww charges at Rs 50,000 per trade.
+# Full report: reports/strategy_research.md.
+#
+#                 win 2022+  profit factor 2022+   before costs
+#   RSI(2)           68%          1.04                 1.43
+#   Cum. RSI(2)      60%          0.92                 1.38
+#   Double 7s        61%          1.09                 1.46
+#   IBS              59%          0.93                 1.42
+#   TPS              69%          1.14                 1.46
+#   5-day losers     59%          1.02                 1.23
+#
+# The win rates were there. The profit was not: delivery costs of about
+# 0.46% per trade (STT 0.1% on each side, DP charge, slippage) turned profit
+# factors of ~1.4 into ~1.0, and every 5-slot portfolio fell further than
+# simply holding the Nifty 50 (-23% to -47% against -16.5%). None met the
+# pre-registered bar, so no swing alerts are sent. Re-run the research
+# (strategy-research workflow) before ever setting enabled: true.
+# ---------------------------------------------------------------------------
+swing:
+  enabled: false
+  position_value: 50000
+  max_positions: 5
+
+# ---------------------------------------------------------------------------
 # MARKET REGIME - is the broad market itself in an uptrend or a downtrend?
 #
 # Definition fixed before measuring (src/strategy/regime.py): Nifty 500 vs its
@@ -189,7 +218,26 @@ sizing:
       require_bull_bear_agreement: false
     # Below conservative.min_conviction, or forensic veto, or kelly <= 0: NO BUY
 
-  atr_stop_multiplier: 2.5           # shares = (capital * risk%) / (ATR * this)
+  # The long-term stop. Measured 2026-09-24 (reports/strategy_research.md),
+  # the live dip rules on the Nifty 500, 15 positions, costs included,
+  # entering at the next open:
+  #
+  #                          2014-21 CAGR / worst fall    2022+ CAGR / worst fall   win 2022+
+  #   2.5 x ATR stop (old)       18.5% / -20.4%              12.3% / -20.9%          24%
+  #   -25% stop (chosen)         16.0% / -18.3%              14.6% / -13.8%          63%
+  #   chandelier 3 x ATR(22)     11.8% / -23.8%               5.1% / -27.6%          36%
+  #
+  # The ATR stop was hit on 115 of 152 trades after 2022, at -9.4% each: it
+  # shook positions meant to be held for months out on ordinary noise. The
+  # -25% stop beat it on both growth and drawdown out of sample. Both keep
+  # the +25%/+50% trims and the trailing stop below.
+  #
+  #   pct - stop at stop_pct below the entry; positions are sized so the
+  #         loss at that stop stays inside the band's risk budget
+  #   atr - stop at atr_stop_multiplier x ATR below the entry (the old rule)
+  stop_rule: pct
+  stop_pct: 25.0
+  atr_stop_multiplier: 2.5           # used when stop_rule is atr
 
   constraints:
     max_positions: 15

@@ -14,9 +14,22 @@ from src.config import load_config
 from src.strategy import sizing as sz
 
 
+class _Override:
+    """The real config with a few keys replaced."""
+
+    def __init__(self, base, **overrides):
+        self._base, self._over = base, overrides
+
+    def get(self, key, default=None):
+        return self._over[key] if key in self._over else self._base.get(key, default)
+
+
 @pytest.fixture
 def cfg():
-    return load_config()
+    # Most tests here exercise the ATR overlay - volatile stocks sized
+    # smaller - which is what `stop_rule: atr` does. The -25% stop now in
+    # config.yaml is covered by TestPercentStop below.
+    return _Override(load_config(), **{"sizing.stop_rule": "atr"})
 
 
 @pytest.fixture
@@ -325,3 +338,40 @@ class TestTranches:
         )
         assert "Bound by" in decision.narrative
         assert "BALANCED" in decision.narrative
+
+
+class TestPercentStop:
+    """The long-term stop chosen by the research: 25% below the entry."""
+
+    @pytest.fixture
+    def pct_cfg(self):
+        return load_config()
+
+    def test_config_uses_the_researched_stop(self, pct_cfg):
+        assert pct_cfg.get("sizing.stop_rule") == "pct"
+        assert pct_cfg.get("sizing.stop_pct") == 25.0
+
+    def test_stop_sits_25_percent_below_entry(self, pct_cfg, portfolio):
+        decision = sz.size_position(
+            symbol="X", conviction=70.0, price=100.0, atr=2.0, cfg=pct_cfg, portfolio=portfolio
+        )
+        assert decision.stop_price == pytest.approx(75.0)
+
+    def test_size_is_built_on_the_real_stop(self, pct_cfg, portfolio):
+        """Risk at the -25% stop must stay inside the band's budget.
+
+        Sizing to a tighter stop than the one used would understate the risk
+        several times over.
+        """
+        decision = sz.size_position(
+            symbol="X", conviction=70.0, price=100.0, atr=2.0, cfg=pct_cfg, portfolio=portfolio
+        )
+        assert decision.is_buy
+        assert decision.risk_amount == pytest.approx(decision.total_shares * 25.0, rel=1e-6)
+        assert decision.risk_pct_of_capital <= 1.5 + 0.05
+
+    def test_no_atr_is_no_problem_for_a_percent_stop(self, pct_cfg, portfolio):
+        decision = sz.size_position(
+            symbol="X", conviction=70.0, price=100.0, atr=0.0, cfg=pct_cfg, portfolio=portfolio
+        )
+        assert decision.stop_price == pytest.approx(75.0)

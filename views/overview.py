@@ -70,7 +70,7 @@ else:
             f"run a fresh one before acting on anything below."
         )
 
-    st.markdown("## Today's candidates")
+    st.markdown("## Long-term candidates")
     st.caption(
         "These passed the three-stage screen. The screen decides what is worth "
         "examining; the committee decides what it thinks."

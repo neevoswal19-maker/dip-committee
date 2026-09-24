@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Literal
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, or_, select
 
 from src import charges as charge_model
 from src import db
@@ -34,6 +34,14 @@ from src.config import load_config
 log = logging.getLogger(__name__)
 
 Side = Literal["BUY", "SELL"]
+
+
+#: The two strategies a position can belong to. Kept apart so each is judged,
+#: sized and exited by its own rules, and labelled everywhere it appears.
+LONG_TERM = "long_term"
+SWING = "swing"
+STRATEGIES = (LONG_TERM, SWING)
+LABELS = {LONG_TERM: "LONG-TERM", SWING: "SWING"}
 
 
 class LedgerError(ValueError):
@@ -122,6 +130,8 @@ class PositionState:
     realised_long_term: float = 0.0
     total_charges: float = 0.0
     trims_taken: list[float] = field(default_factory=list)
+    strategy: str = "long_term"
+    stop_price: float | None = None
 
     @property
     def is_open(self) -> bool:
@@ -298,6 +308,8 @@ def state_for(position_id: int, *, cfg: Any = None) -> PositionState:
         realised_long_term=round(sum(d.gain for d in disposals if d.is_long_term), 2),
         total_charges=round(sum(float(r.get("total_charges") or 0.0) for r in rows), 2),
         trims_taken=_derive_trims(record, sells),
+        strategy=record.get("strategy") or LONG_TERM,
+        stop_price=record.get("stop_price"),
     )
     return state
 
@@ -358,17 +370,38 @@ def _sync_position(position_id: int, *, cfg: Any = None) -> PositionState:
     return state
 
 
-def find_open_position(symbol: str) -> int | None:
+def _strategy_clause(strategy: str):
+    """Match a strategy, treating NULL (positions from before swing) as long-term."""
+    column = db.positions.c.strategy
+    if strategy == LONG_TERM:
+        return or_(column == LONG_TERM, column.is_(None))
+    return column == strategy
+
+
+def find_open_position(symbol: str, strategy: str | None = None) -> int | None:
+    """The open position in `symbol`; in one strategy, if one is named."""
+    conditions = [db.positions.c.symbol == symbol.upper(), db.positions.c.status == "open"]
+    if strategy is not None:
+        conditions.append(_strategy_clause(strategy))
     with db.connection() as conn:
         row = conn.execute(
-            select(db.positions.c.id).where(
-                and_(
-                    db.positions.c.symbol == symbol.upper(),
-                    db.positions.c.status == "open",
-                )
-            ).order_by(db.positions.c.id.desc()).limit(1)
+            select(db.positions.c.id).where(and_(*conditions))
+            .order_by(db.positions.c.id.desc()).limit(1)
         ).first()
     return int(row.id) if row else None
+
+
+def open_strategy_for(symbol: str) -> str | None:
+    """Which strategy holds `symbol` right now, if either does."""
+    with db.connection() as conn:
+        row = conn.execute(
+            select(db.positions.c.strategy).where(
+                and_(db.positions.c.symbol == symbol.upper(), db.positions.c.status == "open")
+            ).order_by(db.positions.c.id.desc()).limit(1)
+        ).first()
+    if row is None:
+        return None
+    return row.strategy or LONG_TERM
 
 
 def create_position(
@@ -380,12 +413,23 @@ def create_position(
     committee_run_id: int | None = None,
     exit_doctrine: dict[str, Any] | None = None,
     notes: str | None = None,
+    strategy: str = "long_term",
 ) -> int:
+    if strategy not in STRATEGIES:
+        raise LedgerError(f"unknown strategy {strategy!r}")
+    held_in = open_strategy_for(symbol)
+    if held_in is not None and held_in != strategy:
+        raise LedgerError(
+            f"{symbol.upper()} is already held as a {LABELS[held_in]} position. Tax rules sell the "
+            f"oldest shares first (FIFO), so selling the {LABELS[strategy]} shares would really "
+            f"sell the {LABELS[held_in]} ones - one stock can only be in one strategy at a time."
+        )
     with db.connection() as conn:
         return conn.execute(
             db.positions.insert().values(
                 symbol=symbol.upper(),
                 status="open",
+                strategy=strategy,
                 conviction=conviction,
                 recommendation=recommendation,
                 stop_price=stop_price,
@@ -462,6 +506,7 @@ def record_trade(
     source: str = "manual",
     cfg: Any = None,
     create_if_missing: bool = True,
+    strategy: str = "long_term",
 ) -> tuple[int, PositionState]:
     """Record one buy or sell and resync the position it belongs to.
 
@@ -481,13 +526,13 @@ def record_trade(
     total_charges = float(breakdown.get("total", 0.0))
 
     if position_id is None:
-        position_id = find_open_position(symbol)
+        position_id = find_open_position(symbol, strategy)
         if position_id is None:
             if side == "SELL":
-                raise LedgerError(f"cannot sell {symbol}: no open position")
+                raise LedgerError(f"cannot sell {symbol}: no open {LABELS.get(strategy, strategy)} position")
             if not create_if_missing:
                 raise LedgerError(f"no open position for {symbol}")
-            position_id = create_position(symbol)
+            position_id = create_position(symbol, strategy=strategy)
 
     if side == "SELL":
         held = state_for(position_id, cfg=cfg).quantity
@@ -711,13 +756,12 @@ def _write_trade_record(position_id: int, state: PositionState, cfg: Any) -> Non
 # --- Portfolio-wide ---------------------------------------------------------
 
 
-def open_positions(*, cfg: Any = None) -> list[PositionState]:
+def open_positions(*, cfg: Any = None, strategy: str | None = None) -> list[PositionState]:
+    query = select(db.positions.c.id).where(db.positions.c.status == "open")
+    if strategy is not None:
+        query = query.where(_strategy_clause(strategy))
     with db.connection() as conn:
-        rows = conn.execute(
-            select(db.positions.c.id)
-            .where(db.positions.c.status == "open")
-            .order_by(db.positions.c.entry_date.desc())
-        ).fetchall()
+        rows = conn.execute(query.order_by(db.positions.c.entry_date.desc())).fetchall()
 
     states = []
     for row in rows:

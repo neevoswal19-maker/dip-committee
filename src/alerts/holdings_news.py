@@ -53,6 +53,7 @@ class NewsFlag:
     when: datetime | None
     link: str | None = None
     held: float = 0.0
+    strategy: str = "long_term"
 
     @property
     def dedupe_key(self) -> str:
@@ -148,6 +149,7 @@ def find(cfg: Any = None) -> tuple[list[NewsFlag], list[str]]:
         seen: set[str] = set()
         for flag in found:
             flag.held = state.quantity
+            flag.strategy = state.strategy
             if flag.dedupe_key not in seen:
                 seen.add(flag.dedupe_key)
                 flags.append(flag)
@@ -160,7 +162,8 @@ def message(flag: NewsFlag) -> str:
 
     when = f" · {flag.when:%d %b %H:%M}" if flag.when else ""
     lines = [
-        f"<b>News on {_escape(flag.symbol)}</b> (you hold {flag.held:g})",
+        f"<b>{'SWING' if flag.strategy == 'swing' else 'LONG-TERM'} NEWS: {_escape(flag.symbol)}</b> "
+        f"(you hold {flag.held:g})",
         f"<b>{SERIOUS_EVENTS[flag.event]}:</b> {_escape(flag.text)}",
         f"{_escape(flag.origin)}{when}",
     ]

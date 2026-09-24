@@ -158,7 +158,7 @@ def test_summary_names_the_session_and_each_verdict():
     assert "Thu 24 Sep session" in body
     assert "INDIANB" in body and "WATCH 53" in body
     assert "DOWNTREND" in body
-    assert "No exit or tax rules fired on your 2 holdings" in body
+    assert "No exit or tax rules fired on your 2 long-term holdings" in body
 
 
 def test_summary_points_to_the_alerts_already_sent():

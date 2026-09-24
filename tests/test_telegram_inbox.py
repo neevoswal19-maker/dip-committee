@@ -160,7 +160,7 @@ def test_a_buy_is_recorded_priced_and_confirmed(world):
     assert "estimated" in tx["notes"]
 
     [sent] = world["sent"]
-    assert "Recorded: BUY 30 INDIANB" in sent["body"]
+    assert "Recorded (LONG-TERM): BUY 30 INDIANB" in sent["body"]
     assert "estimated" in sent["body"]
     assert sent["reply_to"] is not None                  # threaded under the owner's message
 
@@ -175,7 +175,9 @@ def test_a_new_position_gets_an_exit_doctrine_and_committee_context(world):
     assert position["exit_doctrine_json"]
     assert position["conviction"] == 64.0
     assert position["committee_run_id"] == 7
-    assert position["stop_price"] == 799.0
+    # The researched stop: 25% below the actual fill, not the committee's quote.
+    assert position["stop_price"] == pytest.approx(843.50 * 0.75, abs=0.01)
+    assert position["strategy"] == "long_term"
 
 
 def test_stale_committee_verdicts_are_not_attached(world):
@@ -302,7 +304,7 @@ def test_undoing_a_closing_sale_removes_its_closed_trade_record(world):
 def test_holdings_reply(world):
     run(world, message("INDIANB 30"))
     run(world, message("holdings"))
-    assert "INDIANB: 30 shares" in world["sent"][-1]["body"]
+    assert "INDIANB (LONG-TERM): 30 shares" in world["sent"][-1]["body"]
 
 
 def test_every_message_is_logged_in_the_inbox(world):
@@ -440,3 +442,58 @@ def test_price_at_returns_none_when_nothing_answers(monkeypatch):
     monkeypatch.setattr(prices, "_minute_bars", fail)
     monkeypatch.setattr(prices, "_latest_quote", lambda symbol: None)
     assert prices.price_at("INDIANB", datetime(2026, 9, 23, 11, 42)) is None
+
+
+# --- Two strategies -------------------------------------------------------------------
+
+
+NEW_BUY_ALERT = "LONG-TERM BUY: INDIANB
+Conviction 64/100"
+SWING_BUY_ALERT = "SWING BUY: SBIN
+Entry around Rs 800"
+LONG_TERM_EXIT = "LONG-TERM EXIT: INDIANB
+stop-loss"
+
+
+@pytest.mark.parametrize("text, reply, expected", [
+    ("30", NEW_BUY_ALERT, ("BUY", "INDIANB", 30, "long_term")),
+    ("10", SWING_BUY_ALERT, ("BUY", "SBIN", 10, "swing")),
+    ("10", LONG_TERM_EXIT, ("SELL", "INDIANB", 10, "long_term")),
+    ("swing INDIANB 30", None, ("BUY", "INDIANB", 30, "swing")),
+    ("bought INDIANB 30 swing", None, ("BUY", "INDIANB", 30, "swing")),
+    ("INDIANB 30 long term", None, ("BUY", "INDIANB", 30, "long_term")),
+    ("INDIANB 30", None, ("BUY", "INDIANB", 30, "long_term")),
+    ("sold LT 10", None, ("SELL", "LT", 10, "long_term")),    # LT is a stock, not "long-term"
+    ("30", "BUY candidate: INDIANB
+old alert", ("BUY", "INDIANB", 30, "long_term")),
+])
+def test_strategy_comes_from_the_alert_or_the_words(text, reply, expected):
+    command = parse(text, reply)
+    assert isinstance(command, Command), getattr(command, "reply", command)
+    assert (command.side, command.symbol, command.quantity, command.strategy) == expected
+
+
+def test_a_swing_trade_is_recorded_as_swing(world):
+    run(world, message("swing SBIN 10"))
+    with db.connection() as conn:
+        position = dict(conn.execute(select(db.positions)).first()._mapping)
+    assert position["strategy"] == "swing"
+    assert position["exit_doctrine_json"] is None       # no long-term doctrine on a swing trade
+    assert "Recorded (SWING)" in world["sent"][-1]["body"]
+
+
+def test_one_stock_cannot_be_in_both_strategies(world):
+    run(world, message("INDIANB 30"))
+    outcomes = run(world, message("swing INDIANB 10"))
+    assert outcomes[0]["status"] == "rejected"
+    assert "FIFO" in world["sent"][-1]["body"]
+    assert len(transactions()) == 1
+
+
+def test_a_sale_goes_to_the_strategy_that_holds_the_stock(world):
+    run(world, message("swing SBIN 10"))
+    run(world, message("sold SBIN 10"))              # no strategy named
+    with db.connection() as conn:
+        rows = conn.execute(select(db.transactions.c.side, db.positions.c.strategy)
+                            .join(db.positions, db.positions.c.id == db.transactions.c.position_id)).fetchall()
+    assert {(r.side, r.strategy) for r in rows} == {("BUY", "swing"), ("SELL", "swing")}

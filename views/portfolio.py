@@ -86,7 +86,9 @@ with tab_holdings:
                 peak_price=peak,
                 conviction=record.get("conviction"),
             )
-            signals = ex.evaluate(position, price, cfg)
+            # The long-term exit doctrine (trims, trailing stop, tax clock) is
+            # a long-term plan. Swing positions are tracked, not run through it.
+            signals = ex.evaluate(position, price, cfg) if state.strategy == pf.LONG_TERM else []
             signals_by_symbol[state.symbol] = signals
             decision = ex.decide(signals)
 
@@ -101,6 +103,7 @@ with tab_holdings:
 
             rows.append({
                 "Symbol": state.symbol,
+                "Strategy": pf.LABELS.get(state.strategy, state.strategy),
                 "Qty": state.quantity,
                 "Avg cost": state.avg_cost,
                 "Price": price,

@@ -147,7 +147,7 @@ def buy_candidate(report: Any, cfg: Any = None) -> str:
     sizing = report.sizing or {}
 
     lines = [
-        f"<b>BUY candidate: {_escape(report.symbol)}</b>",
+        f"<b>{LONG_TERM_LABEL} BUY: {_escape(report.symbol)}</b>",
         f"Conviction <b>{report.conviction:.0f}</b>/100 &middot; {_escape(report.sector or '')}",
         f"Price Rs {report.price:,.2f}",
         "",
@@ -158,17 +158,14 @@ def buy_candidate(report: Any, cfg: Any = None) -> str:
             f"<b>{_escape(sizing['recommendation'])}</b> - Rs {sizing['total_value']:,.0f} "
             f"({sizing['total_shares']:,} shares, {sizing.get('pct_of_capital', 0):.1f}% of capital)"
         )
-        if sizing.get("stop_price"):
-            lines.append(
-                f"Stop Rs {sizing['stop_price']:,.2f}, risking Rs {sizing.get('risk_amount', 0):,.0f} "
-                f"({sizing.get('risk_pct_of_capital', 0):.2f}%)"
-            )
         tranches = sizing.get("tranches") or []
         if tranches:
             first = tranches[0]
             lines.append(
                 f"Staged: Rs {first['value']:,.0f} now, {len(tranches) - 1} tranche(s) to follow"
             )
+        lines.append("")
+        lines.extend(long_term_exit_lines(sizing, getattr(report, "exit_doctrine", None) or {}))
 
     market = getattr(report, "market_regime", None) or {}
     if market.get("label"):
@@ -199,13 +196,46 @@ def buy_candidate(report: Any, cfg: Any = None) -> str:
     return "\n".join(lines)
 
 
+#: The two labels every alert carries, so the strategies can't be confused.
+LONG_TERM_LABEL = "LONG-TERM"
+SWING_LABEL = "SWING"
+
+
+def long_term_exit_lines(sizing: dict[str, Any], doctrine: dict[str, Any]) -> list[str]:
+    """The stop and targets of a long-term buy, as the alert states them."""
+    lines = ["<b>Exit plan</b>"]
+    stop = sizing.get("stop_price") or doctrine.get("stop_price")
+    if stop:
+        risk = sizing.get("risk_amount")
+        risk_text = f", risking Rs {risk:,.0f} ({sizing.get('risk_pct_of_capital', 0):.2f}%)" if risk else ""
+        lines.append(f"Stop-loss: Rs {stop:,.2f}{risk_text}")
+    chandelier = doctrine.get("chandelier_atr")
+    if chandelier:
+        lines.append(
+            f"Trailing stop: the highest price since you bought, minus {chandelier:g} x ATR(22). "
+            "It only ever rises; no fixed target."
+        )
+    for target in doctrine.get("targets") or []:
+        lines.append(
+            f"Target: sell {target['trim_pct']:.0f}% at Rs {target['price']:,.2f} "
+            f"(+{target['gain_pct']:.0f}%)"
+        )
+    trailing = doctrine.get("trailing_stop") or {}
+    if trailing.get("activate_after_gain_pct") and not chandelier:
+        lines.append(
+            f"Then: sell the rest if it falls {trailing.get('trail_pct', 20):.0f}% from its peak, "
+            f"once it has been up {trailing['activate_after_gain_pct']:.0f}%"
+        )
+    return lines if len(lines) > 1 else []
+
+
 def exit_signal(symbol: str, signal: Any, position: Any, price: float, cfg: Any = None) -> str:
     """An exit doctrine signal on something held."""
     cfg = cfg or load_config()
     gain = position.gain_pct(price)
 
     lines = [
-        f"<b>{_escape(signal.action)}: {_escape(symbol)}</b>",
+        f"<b>{LONG_TERM_LABEL} {_escape(signal.action)}: {_escape(symbol)}</b>",
         f"{_escape(signal.rule.replace('_', ' '))} &middot; {gain:+.1f}% at Rs {price:,.2f}",
         "",
         _escape(signal.message),
@@ -224,7 +254,7 @@ def ltcg_warning(symbol: str, detail: dict[str, Any], cfg: Any = None) -> str:
     cfg = cfg or load_config()
 
     lines = [
-        f"<b>Tax deadline: {_escape(symbol)}</b>",
+        f"<b>{LONG_TERM_LABEL} TAX DEADLINE: {_escape(symbol)}</b>",
         f"{detail['days_to_ltcg']} days to long-term treatment on the oldest shares.",
         "",
         f"Unrealised profit on that lot: Rs {detail['unrealised_profit']:,.0f}",
@@ -255,6 +285,7 @@ def scan_summary(
     holdings: int = 0,
     news_sent: int = 0,
     news_unchecked: list[str] | None = None,
+    swing_holdings: int = 0,
 ) -> str:
     """The morning summary, sent every scheduled run.
 
@@ -276,7 +307,7 @@ def scan_summary(
     lines.append("")
 
     if candidates:
-        lines.append(f"<b>{len(candidates)} candidate{'s' if len(candidates) != 1 else ''}</b>")
+        lines.append(f"<b>{LONG_TERM_LABEL}: {len(candidates)} candidate{'s' if len(candidates) != 1 else ''}</b>")
         for candidate in candidates[:5]:
             conviction = candidate.get("conviction")
             stance = candidate.get("stance")
@@ -304,11 +335,16 @@ def scan_summary(
             )
         else:
             lines.append(
-                f"No exit or tax rules fired on your {holdings} "
+                f"No exit or tax rules fired on your {holdings} long-term "
                 f"holding{'s' if holdings != 1 else ''}."
             )
     else:
-        lines.append("No holdings recorded.")
+        lines.append("No long-term holdings recorded.")
+    if swing_holdings:
+        lines.append(
+            f"{swing_holdings} swing position{'s' if swing_holdings != 1 else ''} tracked. "
+            f"No swing rule passed the backtest, so they get no exit alerts."
+        )
 
     if holdings:
         # None means the whole check failed; a list names the holdings it

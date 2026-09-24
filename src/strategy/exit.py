@@ -198,7 +198,7 @@ class ExitDoctrine:
         )
         if self.stop_price:
             lines.append(f"  - Initial stop Rs {self.stop_price:,.2f}")
-        lines.append(f"  - Hard stop at {self.hard_stop_pct:.0f}% forces a committee re-review, not an automatic sale")
+        lines.append(f"  - Stop-loss at {self.hard_stop_pct:.0f}%: sell")
         lines.append("  - Sell regardless of price if any of these break:")
         for rule in self.thesis_break_rules:
             lines.append(f"      * {rule}")
@@ -234,7 +234,11 @@ def build_doctrine(
         stop_price=stop_price,
         targets=targets,
         trailing_stop=dict(cfg.get("exit.trailing_stop", {}) or {}),
-        hard_stop_pct=float(cfg.get("exit.hard_stop_pct", -25.0)),
+        hard_stop_pct=(
+            -abs(float(cfg.get("sizing.stop_pct", 25.0)))
+            if str(cfg.get("sizing.stop_rule", "atr")).lower() == "pct"
+            else float(cfg.get("exit.hard_stop_pct", -25.0))
+        ),
         thesis_break_rules=[
             "Financial forensics flag turns critical",
             "Promoter pledge rises sharply",
@@ -448,6 +452,20 @@ def _stop_signals(position: Position, price: float, gain: float, cfg: Any) -> li
     signals: list[ExitSignal] = []
 
     hard = float(cfg.get("exit.hard_stop_pct", -25.0))
+    if str(cfg.get("sizing.stop_rule", "atr")).lower() == "pct":
+        hard = -abs(float(cfg.get("sizing.stop_pct", abs(hard))))
+        if gain <= hard:
+            signals.append(
+                ExitSignal(
+                    "hard_stop", "EXIT", "urgent",
+                    f"Down {gain:.1f}%, through the {hard:.0f}% stop-loss. Sell. This is the "
+                    f"stop that was backtested: selling here beat a tighter ATR stop on both "
+                    f"growth and drawdown from 2022 on.",
+                    {"gain_pct": round(gain, 2), "hard_stop_pct": hard},
+                )
+            )
+        return signals
+
     if gain <= hard:
         signals.append(
             ExitSignal(

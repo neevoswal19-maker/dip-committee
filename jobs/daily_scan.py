@@ -79,9 +79,14 @@ def store_todays_delivery(cfg, index: str | None = None) -> int:
 
 
 def check_holdings(cfg) -> list[dict]:
-    """Run the exit doctrine over everything held, and alert on what fires."""
+    """Run the exit doctrine over long-term holdings, and alert on what fires.
+
+    Swing positions the owner records are tracked but not run through this:
+    trims at +25% and a 20% trailing stop are a long-term plan, and no swing
+    rule passed the research, so there is no tested swing exit to apply.
+    """
     alerts: list[dict] = []
-    states = portfolio.open_positions(cfg=cfg)
+    states = portfolio.open_positions(cfg=cfg, strategy=portfolio.LONG_TERM)
 
     if not states:
         log.info("No open positions to check")
@@ -326,7 +331,8 @@ def main() -> int:
                 telegram.scan_summary(
                     summary, enriched, cfg, market=market.to_dict(),
                     buy_alerts=buys, holding_alerts=len(exits),
-                    holdings=len(portfolio.open_positions(cfg=cfg)),
+                    holdings=len(portfolio.open_positions(cfg=cfg, strategy=portfolio.LONG_TERM)),
+                    swing_holdings=len(portfolio.open_positions(cfg=cfg, strategy=portfolio.SWING)),
                     news_sent=news_sent, news_unchecked=news_unchecked,
                 ),
                 alert_type="scan_summary",
