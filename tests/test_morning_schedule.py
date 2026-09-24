@@ -131,3 +131,60 @@ def test_the_workflow_runs_before_eight_and_holds_until_eight():
     assert "--send-at 08:00" in run_step["run"]
     assert "schedule" in run_step["run"]                      # manual runs don't wait
     assert workflow["jobs"]["scan"]["timeout-minutes"] >= 60
+
+
+# --- The morning summary ---------------------------------------------------------
+
+
+def _summary_inputs():
+    from types import SimpleNamespace
+
+    scan = SimpleNamespace(universe_size=501, duration_seconds=500, passed_dip=15,
+                           passed_delivery=1, trade_date=date(2026, 9, 24))
+    market = {"label": "DOWNTREND", "pct_vs_dma": -0.3, "dma_slope_pct": -1.1}
+    return scan, market
+
+
+def test_summary_names_the_session_and_each_verdict():
+    from src.alerts import telegram
+    from src.config import load_config
+
+    scan, market = _summary_inputs()
+    body = telegram.scan_summary(
+        scan, [{"symbol": "INDIANB", "close": 842.0, "drawdown_pct": 15.1,
+                "conviction": 53.0, "stance": "WATCH"}],
+        load_config(), market=market, holdings=2,
+    )
+    assert "Thu 24 Sep session" in body
+    assert "INDIANB" in body and "WATCH 53" in body
+    assert "DOWNTREND" in body
+    assert "No exit or tax rules fired on your 2 holdings" in body
+
+
+def test_summary_points_to_the_alerts_already_sent():
+    from src.alerts import telegram
+    from src.config import load_config
+
+    scan, market = _summary_inputs()
+    body = telegram.scan_summary(scan, [], load_config(), market=market,
+                                 buy_alerts=["SBIN"], holding_alerts=1, holdings=1)
+    assert "BUY alert sent above: SBIN" in body
+    assert "1 alert on your 1 holding" in body
+
+
+def test_an_unassessed_candidate_says_so():
+    from src.alerts import telegram
+    from src.config import load_config
+
+    scan, market = _summary_inputs()
+    body = telegram.scan_summary(scan, [{"symbol": "SBIN", "close": 800.0, "drawdown_pct": 12.0,
+                                         "conviction": None}], load_config(), market=market)
+    assert "not assessed" in body
+
+
+def test_the_scheduled_run_always_summarises():
+    import yaml
+
+    workflow = yaml.safe_load(open(".github/workflows/daily-scan.yml", encoding="utf-8"))
+    run_step = next(s for s in workflow["jobs"]["scan"]["steps"] if s.get("name") == "Run the scan")
+    assert "--send-at 08:00 --summary" in run_step["run"]

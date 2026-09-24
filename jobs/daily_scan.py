@@ -203,7 +203,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="cap the universe, for testing")
     parser.add_argument("--no-alerts", action="store_true", help="run without sending anything")
     parser.add_argument("--summary", action="store_true",
-                        help="send a summary even when there is nothing to report")
+                        help="send the morning summary (scheduled runs always do)")
     parser.add_argument("--send-at", default=None, metavar="HH:MM",
                         help="hold every Telegram message until this IST time")
     args = parser.parse_args()
@@ -264,15 +264,23 @@ def main() -> int:
                 cfg=cfg,
             )
 
-        if args.summary and not buys and not exits:
+        if args.summary:
             _, candidates = scan.latest_candidates()
             convictions = scan.convictions_for([c["symbol"] for c in candidates])
             enriched = [
-                {**c, "conviction": convictions.get(c["symbol"], {}).get("conviction")}
+                {
+                    **c,
+                    "conviction": convictions.get(c["symbol"], {}).get("conviction"),
+                    "stance": convictions.get(c["symbol"], {}).get("stance"),
+                }
                 for c in candidates
             ]
             telegram.send(
-                telegram.scan_summary(summary, enriched, cfg, market=market.to_dict()),
+                telegram.scan_summary(
+                    summary, enriched, cfg, market=market.to_dict(),
+                    buy_alerts=buys, holding_alerts=len(exits),
+                    holdings=len(portfolio.open_positions(cfg=cfg)),
+                ),
                 alert_type="scan_summary",
                 dedupe_key=f"summary|{date.today().isoformat()}",
                 cfg=cfg,

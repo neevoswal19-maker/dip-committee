@@ -82,7 +82,7 @@ jobs:
           # Only the scheduled run waits for 08:00. A manual run sends as
           # soon as it finishes.
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            ARGS="$ARGS --send-at 08:00"
+            ARGS="$ARGS --send-at 08:00 --summary"
           fi
           python jobs/daily_scan.py $ARGS
 

@@ -249,14 +249,24 @@ def scan_summary(
     candidates: list[dict[str, Any]],
     cfg: Any = None,
     market: dict[str, Any] | None = None,
+    *,
+    buy_alerts: list[str] | None = None,
+    holding_alerts: int = 0,
+    holdings: int = 0,
 ) -> str:
-    """What the scan found, sent when nothing else would be."""
+    """The morning summary, sent every scheduled run.
+
+    It goes out after the individual alerts and says which of them fired, so
+    it can be read on its own as the complete picture of the morning.
+    """
     cfg = cfg or load_config()
 
+    session = getattr(summary, "trade_date", None)
+    title = f"<b>Morning scan: {session:%a %d %b} session</b>" if session else "<b>Daily scan complete</b>"
+
     lines = [
-        "<b>Daily scan complete</b>",
-        f"{summary.universe_size} scanned in {summary.duration_seconds:.0f}s",
-        f"{summary.passed_dip} passed the dip screen, "
+        title,
+        f"{summary.universe_size} scanned, {summary.passed_dip} passed the dip screen, "
         f"{summary.passed_delivery} confirmed on delivery",
     ]
     if market and market.get("label"):
@@ -264,18 +274,39 @@ def scan_summary(
     lines.append("")
 
     if candidates:
-        lines.append(f"<b>{len(candidates)} candidate(s)</b>")
+        lines.append(f"<b>{len(candidates)} candidate{'s' if len(candidates) != 1 else ''}</b>")
         for candidate in candidates[:5]:
             conviction = candidate.get("conviction")
-            verdict = f"conviction {conviction:.0f}" if conviction is not None else "not assessed"
+            stance = candidate.get("stance")
+            if conviction is None:
+                verdict = "not assessed by the committee"
+            else:
+                verdict = f"{_escape(stance)} {conviction:.0f}" if stance else f"conviction {conviction:.0f}"
             lines.append(
-                f"  {_escape(candidate['symbol'])} - Rs {candidate['close']:,.2f}, "
+                f"  {_escape(candidate['symbol'])}: Rs {candidate['close']:,.2f}, "
                 f"{candidate['drawdown_pct']:.0f}% off high, {verdict}"
             )
     elif (market or {}).get("label") == "UPTREND":
         lines.append("No candidates. Normal near a market high.")
     else:
         lines.append("No candidates today.")
+
+    lines.append("")
+    if buy_alerts:
+        lines.append(f"BUY alert sent above: {_escape(', '.join(buy_alerts))}")
+    if holdings:
+        if holding_alerts:
+            lines.append(
+                f"{holding_alerts} alert{'s' if holding_alerts != 1 else ''} on your "
+                f"{holdings} holding{'s' if holdings != 1 else ''}, sent above."
+            )
+        else:
+            lines.append(
+                f"No exit or tax rules fired on your {holdings} "
+                f"holding{'s' if holdings != 1 else ''}."
+            )
+    else:
+        lines.append("No holdings recorded.")
 
     lines.extend(["", f"<i>{_escape(_disclaimer(cfg))}</i>"])
     return "\n".join(lines)
