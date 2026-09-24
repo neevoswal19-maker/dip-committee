@@ -1,0 +1,56 @@
+name: Strategy research
+
+# Backtests every published swing rule, and three long-term exit plans, and
+# uploads reports/strategy_research.md with the trades behind it. Runs on
+# GitHub because Smart App Control blocks pandas on the development machine.
+#
+# It needs no secrets: prices come from Yahoo and the index lists from NSE,
+# and nothing is written to the database.
+on:
+  workflow_dispatch:
+    inputs:
+      skip_long_term:
+        description: "Skip the long-term exit comparison (faster)"
+        type: boolean
+        default: false
+  push:
+    branches: ["research/**"]
+
+concurrency:
+  group: strategy-research-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the research
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.skip_long_term }}" = "true" ]; then
+            ARGS="--skip-long-term"
+          fi
+          python jobs/strategy_research.py $ARGS
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-research-${{ github.run_id }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: warn
