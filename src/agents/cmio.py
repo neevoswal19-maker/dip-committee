@@ -38,13 +38,18 @@ def decide(
     closed_trades: list[dict[str, Any]] | None = None,
     trade_date: date | None = None,
     market_regime: Any = None,
+    desk_weights: dict[str, float] | None = None,
 ) -> CommitteeReport:
-    """Weigh the desks, set conviction, and size the position."""
+    """Weigh the desks, set conviction, and size the position.
+
+    `desk_weights` are the learner's current weights when given (see
+    learning/weights.py); otherwise the config's.
+    """
     report = CommitteeReport(
         symbol=symbol, price=price, sector=sector, trade_date=trade_date, desks=desks
     )
 
-    weights = cfg.get("committee.desk_weights", {}) or {}
+    weights = desk_weights or cfg.get("committee.desk_weights", {}) or {}
     contributing: list[tuple[DeskReport, float]] = []
 
     for desk in desks:

@@ -29,6 +29,7 @@ from src.agents import registry
 from src.agents.schemas import CommitteeReport, DeskReport, Verdict
 from src.config import load_config
 from src.data.provider import StockIdentity
+from src.learning import weights as learned_weights
 from src.strategy import regime as regime_rules
 from src.strategy import sizing as sizing_rules
 
@@ -113,6 +114,7 @@ def run(
         closed_trades=closed_trades or _closed_trades(),
         trade_date=ctx.as_of,
         market_regime=market_regime,
+        desk_weights=learned_weights.active_weights(cfg),
     )
     report.duration_seconds = time.time() - started
 

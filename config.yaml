@@ -352,6 +352,10 @@ committee:
 learning:
   auto_apply: true
   min_closed_trades: 30              # nothing moves before this
+  # Desk weights learn from every committee run's outcome, not only closed
+  # trades: min_observations runs must have matured at primary_horizon_days.
+  min_observations: 30
+  primary_horizon_days: 90
   max_weight_step_pct: 20.0          # no weight moves >20% of its value at once
   shrinkage: 0.70                    # pull toward prior; 1.0 = never change
   out_of_sample_fraction: 0.30       # held-out slice a change must also improve

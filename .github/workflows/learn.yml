@@ -1,0 +1,56 @@
+name: Learning
+
+# The weekly learning run (jobs/learn.py): measure outcomes, score the bots,
+# adjust desk weights within the guardrails, review closed trades, file
+# proposals, and send the digest. Saturday, when nothing else runs; its
+# timing does not matter, so GitHub's own scheduler is fine here.
+on:
+  schedule:
+    - cron: "23 4 * * 6"     # Saturday ~09:53 IST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Measure and score only; change nothing and send nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: learning
+  cancel-in-progress: false
+
+# Contents and pull requests: an approved rule change is applied by opening
+# a pull request that edits config.yaml. Nothing changes until it is merged.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Learn
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="--dry-run"
+          fi
+          python jobs/learn.py $ARGS
