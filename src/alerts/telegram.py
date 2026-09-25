@@ -89,6 +89,50 @@ def send(
         log.info("Alert %s already sent, skipping", key)
         return False
 
+    if _queue is not None:
+        # Claimed now, delivered at release: the database work happens before
+        # the send time, and only the network call waits for it.
+        _queue.append((key, body, reply_to, alert_type, symbol))
+        return True
+
+    return _deliver(key, body, reply_to=reply_to, alert_type=alert_type, symbol=symbol)
+
+
+#: Messages claimed but not yet delivered, while held for a send time.
+_queue: list[tuple[str, str, int | None, str, str | None]] | None = None
+
+
+def hold_messages() -> None:
+    """Queue every message from now on instead of sending it.
+
+    The morning job builds its alerts before 08:00 - that needs dozens of
+    queries to a database on another continent, which took three and a half
+    minutes on the first morning - and releases them all at 08:00 with
+    nothing left to do but post them. Each message is still claimed against
+    its dedupe key when queued, so a duplicate is refused at once and the
+    caller's count of what was sent stays true.
+    """
+    global _queue
+    _queue = []
+
+
+def release_messages() -> int:
+    """Deliver everything queued since `hold_messages`, in order. Returns how many went."""
+    global _queue
+    queued, _queue = (_queue or []), None
+    delivered = 0
+    for key, body, reply_to, alert_type, symbol in queued:
+        if _deliver(key, body, reply_to=reply_to, alert_type=alert_type, symbol=symbol):
+            delivered += 1
+    return delivered
+
+
+def _deliver(key: str, body: str, *, reply_to: int | None, alert_type: str, symbol: str | None) -> bool:
+    """Post one claimed message to Telegram and record whether it arrived."""
+    token, chat_id = telegram_credentials()
+    if not (token and chat_id):
+        return False
+
     text = body if len(body) <= MAX_LENGTH else body[: MAX_LENGTH - 20] + "\n... (truncated)"
 
     payload: dict[str, Any] = {

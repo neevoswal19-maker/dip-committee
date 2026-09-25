@@ -296,7 +296,9 @@ def main() -> int:
             news_flags, news_unchecked = [], None
         log.info("%d serious item(s) found on holdings", len(news_flags))
 
-        hold_until(args.send_at)
+        # Everything from here is built now and posted at the send time.
+        if args.send_at:
+            telegram.hold_messages()
 
         log.info("--- alerting on BUY verdicts")
         buys = alert_on_buys(cfg)
@@ -346,6 +348,10 @@ def main() -> int:
                 cfg=cfg,
             )
 
+        if args.send_at:
+            hold_until(args.send_at)
+            log.info("Released %d message(s)", telegram.release_messages())
+
         log.info("Done.")
         return 0
 
@@ -353,6 +359,8 @@ def main() -> int:
         log.exception("The daily scan failed")
         if not args.no_alerts:
             hold_until(args.send_at)
+            # Anything built before the failure goes out with the failure notice.
+            telegram.release_messages()
             telegram.send(
                 telegram.failure(f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()[-800:]}"),
                 alert_type="scan_failure",
