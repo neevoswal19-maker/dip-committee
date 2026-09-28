@@ -1,6 +1,6 @@
 """The shapes every bot speaks in.
 
-One uniform `Verdict` across all 23 bots is what makes the Leads' and the
+One uniform `Verdict` across all 24 bots is what makes the Leads' and the
 CMIO's aggregation arithmetic rather than opinion, and it is what lets the
 learning loop score each bot later by correlating its number against what
 actually happened.

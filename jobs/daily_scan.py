@@ -332,6 +332,7 @@ def main() -> int:
                     **c,
                     "conviction": convictions.get(c["symbol"], {}).get("conviction"),
                     "stance": convictions.get(c["symbol"], {}).get("stance"),
+                    "valuation": convictions.get(c["symbol"], {}).get("valuation"),
                 }
                 for c in candidates
             ]

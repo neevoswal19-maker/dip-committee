@@ -194,8 +194,12 @@ def buy_candidate(report: Any, cfg: Any = None) -> str:
         f"<b>{LONG_TERM_LABEL} BUY: {_escape(report.symbol)}</b>",
         f"Conviction <b>{report.conviction:.0f}</b>/100 &middot; {_escape(report.sector or '')}",
         f"Price Rs {report.price:,.2f}",
-        "",
     ]
+    valuation = next((v for v in (getattr(report, "all_verdicts", None) or [])
+                      if v.bot_id == "valuation_analyst"), None)
+    if valuation is not None and valuation.key_findings:
+        lines.append(_escape(valuation.key_findings[0]))
+    lines.append("")
 
     if sizing.get("is_buy"):
         lines.append(
@@ -359,6 +363,8 @@ def scan_summary(
                 verdict = "not assessed by the committee"
             else:
                 verdict = f"{_escape(stance)} {conviction:.0f}" if stance else f"conviction {conviction:.0f}"
+            if candidate.get("valuation"):
+                verdict += f", looks {_escape(candidate['valuation']).lower()}"
             lines.append(
                 f"  {_escape(candidate['symbol'])}: Rs {candidate['close']:,.2f}, "
                 f"{candidate['drawdown_pct']:.0f}% off high, {verdict}"

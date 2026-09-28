@@ -25,7 +25,7 @@ DESK = "equity"
 
 
 class FundamentalResearchAnalyst(Analyst):
-    """Is the business worth owning, and is it cheap relative to itself."""
+    """Is the business worth owning. Whether it is cheap is the Valuation Analyst's call."""
 
     bot_id = "fundamental_research_analyst"
     desk = DESK
@@ -90,10 +90,8 @@ class FundamentalResearchAnalyst(Analyst):
                 findings.append(f"Profit ({profit_growth:+.1f}%) outpacing revenue - operating leverage.")
                 components.append(1.5)
 
-        pe = metrics.get("pe_trailing")
-        if pe is not None and pe > 0:
-            components.append(band_score(pe * -1, [(-10, 2.5), (-20, 1.5), (-35, 0.0), (-60, -2.0), (-1e9, -3.5)]))
-            findings.append(f"Trailing P/E {pe:.1f}.")
+        # Valuation is the Valuation Analyst's job; scoring P/E here as well
+        # would count it twice in the equity desk.
 
         profitable = metrics.get("profitable_years_of_4")
         if profitable is not None:
@@ -333,4 +331,160 @@ class PreEarningsAnalyst(Analyst):
                                       None if drift is None else round(drift, 2))])
 
 
-ANALYSTS = (FundamentalResearchAnalyst, FinancialForensicsAnalyst, PreEarningsAnalyst)
+class ValuationAnalyst(Analyst):
+    """Is the price cheap - against the company's own past, and against its peers.
+
+    A single P/E scale for every company makes banks look permanently cheap
+    and consumer-goods makers permanently dear. So the stock is judged on
+    the right measure for its kind of business, and against two references:
+
+    * **Its own history**: today's multiple against its median at the last
+      several fiscal year-ends. Cheaper than it usually is?
+    * **Its sector**: against the sector's median across the Nifty 500
+      (refreshed weekly). Cheaper than its peers?
+
+    Lenders are judged on price to book, because earnings multiples mislead
+    for them. Everyone else on P/E, plus PEG (P/E over profit growth, so a
+    fast grower is not punished for a higher multiple) and free-cash-flow
+    yield (the cash the business actually produces for its price).
+    """
+
+    bot_id = "valuation_analyst"
+    desk = DESK
+    name = "Valuation Analyst"
+    requires = ("fundamentals",)
+
+    #: current / reference -> score. Below 0.7 of its usual multiple is cheap.
+    RATIO_BANDS = [(-0.70, 4.0), (-0.85, 2.5), (-1.00, 1.0), (-1.15, -0.5), (-1.35, -2.0), (-1e9, -3.5)]
+
+    def gather(self, ctx: Any) -> dict[str, Any]:
+        from statistics import median
+
+        from src.data import valuations
+
+        f = ctx.get("fundamentals")
+        if not f:
+            return {"data_available": False, "note": "no fundamentals"}
+
+        sector = (f.get("sector") or "").strip()
+        lender = sector in set(self.cfg.get("quality_gate.debt_exempt_sectors", []) or [])
+        basis = "pb" if lender else "pe"
+
+        frame = ctx.price_frame
+        closes = frame["close"] if frame is not None and not frame.empty else None
+        price = float(closes.iloc[-1]) if closes is not None else None
+
+        def close_on(day: str) -> float | None:
+            if closes is None:
+                return None
+            before = closes[closes.index <= pd.Timestamp(day)]
+            # Only if the price history actually reaches back that far.
+            if before.empty or (pd.Timestamp(day) - before.index[-1]).days > 10:
+                return None
+            return float(before.iloc[-1])
+
+        per_share = f.get("bvps_history" if lender else "eps_history") or []
+        history = []
+        for day, value in per_share:
+            px = close_on(day)
+            if px is not None and value and value > 0:
+                history.append(px / float(value))
+
+        if lender:
+            current = f.get("price_to_book")
+            if (not current or current <= 0) and price and per_share and per_share[0][1] > 0:
+                current = price / per_share[0][1]
+        else:
+            current = f.get("pe_trailing")
+            if (not current or current <= 0) and price and per_share and per_share[0][1] > 0:
+                current = price / per_share[0][1]
+        current = float(current) if current and current > 0 else None
+
+        loss_making = (not lender and current is None and bool(per_share) and per_share[0][1] <= 0)
+
+        peers = valuations.sector_medians(sector)
+        growth = f.get("profit_cagr_3y_pct")
+        peg = current / growth if (not lender and current and growth and growth > 0) else None
+        fcf_yield = None if lender else f.get("fcf_yield_pct")
+
+        if current is None and fcf_yield is None and not loss_making:
+            return {"data_available": False, "note": "no usable valuation figures"}
+
+        return {
+            "basis": basis, "sector": sector, "current": current,
+            "own_median": median(history) if len(history) >= 3 else None,
+            "own_years": len(history),
+            "sector_median": (peers.get(basis) or {}).get("median"),
+            "sector_peers": (peers.get(basis) or {}).get("n"),
+            "peg": peg, "profit_growth": growth,
+            "fcf_yield": fcf_yield,
+            "sector_fcf_yield": None if lender else (peers.get("fcf_yield") or {}).get("median"),
+            "loss_making": loss_making,
+        }
+
+    def judge(self, metrics: dict[str, Any]) -> Verdict:
+        label_name = "P/B" if metrics["basis"] == "pb" else "P/E"
+        current = metrics["current"]
+        components: list[float] = []
+        findings: list[str] = []
+        refs: list[str] = []
+
+        if metrics["loss_making"]:
+            components.append(-2.0)
+            findings.append("Loss-making in the latest year, so there is no meaningful P/E.")
+
+        own = metrics["own_median"]
+        if current and own:
+            components.append(band_score(-(current / own), self.RATIO_BANDS))
+            refs.append(f"its usual {own:.1f}")
+            findings.append(f"{label_name} {current:.1f} against its median of {own:.1f} at the last "
+                            f"{metrics['own_years']} year-ends.")
+
+        peer = metrics["sector_median"]
+        if current and peer:
+            components.append(band_score(-(current / peer), self.RATIO_BANDS))
+            refs.append(f"sector {peer:.1f}")
+            findings.append(f"{label_name} {current:.1f} against the {metrics['sector']} median of "
+                            f"{peer:.1f} ({metrics['sector_peers']} companies).")
+        elif current and not peer:
+            findings.append("No sector median available yet, so it is not compared with peers.")
+
+        peg = metrics["peg"]
+        if peg is not None:
+            components.append(band_score(-peg, [(-0.8, 3.0), (-1.2, 1.5), (-2.0, 0.0), (-3.0, -1.5), (-1e9, -3.0)]))
+            findings.append(f"PEG {peg:.2f}: P/E {current:.1f} over {metrics['profit_growth']:.1f}% "
+                            f"yearly profit growth.")
+
+        fcf = metrics["fcf_yield"]
+        if fcf is not None:
+            components.append(band_score(fcf, [(6.0, 3.0), (4.0, 2.0), (2.0, 0.5), (0.0, -0.5), (-1e9, -2.0)]))
+            sector_fcf = metrics["sector_fcf_yield"]
+            findings.append(f"Free-cash-flow yield {fcf:.1f}%"
+                            + (f" against a sector median of {sector_fcf:.1f}%." if sector_fcf is not None else "."))
+
+        score = sum(components) / len(components) if components else 0.0
+        label = "CHEAP" if score >= 1.5 else ("EXPENSIVE" if score <= -1.5 else "FAIR")
+        if metrics["loss_making"] and not current:
+            label = "LOSS-MAKING"
+        if current:
+            headline = f"Valuation: {label} - {label_name} {current:.1f}" + (
+                f" vs {' and '.join(refs)}." if refs else ".")
+        else:
+            headline = f"Valuation: {label}."
+        findings.insert(0, headline)
+
+        return self.verdict(
+            score, min(0.8, 0.3 + 0.12 * len(components)), findings,
+            [
+                Evidence("valuation_label", label),
+                Evidence("basis", label_name),
+                Evidence("current", round(current, 2) if current else None),
+                Evidence("own_median", round(own, 2) if own else None),
+                Evidence("sector_median", round(peer, 2) if peer else None),
+                Evidence("peg", round(peg, 2) if peg is not None else None),
+                Evidence("fcf_yield_pct", round(fcf, 2) if fcf is not None else None),
+            ],
+        )
+
+
+ANALYSTS = (FundamentalResearchAnalyst, FinancialForensicsAnalyst, PreEarningsAnalyst, ValuationAnalyst)

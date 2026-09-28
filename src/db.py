@@ -448,6 +448,23 @@ swing_signals = Table(
 )
 
 
+# Median valuations per sector across the Nifty 500, refreshed weekly by
+# jobs/sector_valuations.py. The Valuation Analyst compares a stock with its
+# peers through this table rather than fetching 500 companies per run.
+sector_valuations = Table(
+    "sector_valuations", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("computed_at", DateTime, default=now),
+    Column("sector", String(64), nullable=False),
+    Column("metric", String(32), nullable=False),     # pe | pb | fcf_yield
+    Column("median", Float),
+    Column("p25", Float),
+    Column("p75", Float),
+    Column("n", Integer),
+    UniqueConstraint("sector", "metric", name="uq_sector_metric"),
+)
+
+
 # Messages sent *to* the bot. Each Telegram update is claimed here before it
 # is acted on, and update_id is unique, so the 15-minute job and a dashboard
 # page load cannot both record the same purchase.

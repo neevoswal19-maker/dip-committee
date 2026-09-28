@@ -255,9 +255,26 @@ def convictions_for(symbols: list[str]) -> dict[str, dict[str, Any]]:
                 .limit(1)
             ).first()
             if row is not None:
-                out[symbol.upper()] = dict(row._mapping)
+                record = dict(row._mapping)
+                record.update(_valuation_of(conn, record["id"]))
+                out[symbol.upper()] = record
 
     return out
+
+
+def _valuation_of(conn: Any, run_id: int) -> dict[str, Any]:
+    """The Valuation Analyst's label and headline for one committee run."""
+    row = conn.execute(
+        select(db.bot_verdicts.c.evidence_json, db.bot_verdicts.c.key_findings_json)
+        .where(db.bot_verdicts.c.run_id == run_id)
+        .where(db.bot_verdicts.c.bot_id == "valuation_analyst")
+    ).first()
+    if row is None:
+        return {}
+    evidence = {e.get("field"): e.get("value") for e in db.from_json(row.evidence_json, []) or []}
+    findings = db.from_json(row.key_findings_json, []) or []
+    return {"valuation": evidence.get("valuation_label"),
+            "valuation_note": findings[0] if findings else None}
 
 
 def _upsert_stocks(results: list[screener.ScreenResult]) -> None:

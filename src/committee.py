@@ -47,7 +47,7 @@ def run(
     progress: Any = None,
     market_regime: Any = None,
 ) -> CommitteeReport:
-    """Run all 23 bots over one stock.
+    """Run all 24 bots over one stock.
 
     Pass `market_regime` when running many stocks, so the index is read once
     per scan rather than once per stock.

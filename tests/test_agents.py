@@ -117,13 +117,14 @@ def verdict(bot_id: str, desk: str, score: float, confidence: float = 0.7, **kwa
 
 
 class TestRegistry:
-    def test_the_chart_has_twenty_three_bots(self):
-        assert len(registry.all_analyst_classes()) == 17
-        assert registry.bot_count() == 23
+    def test_the_chart_has_twenty_four_bots(self):
+        # The original 23, plus the Valuation Analyst on the equity desk.
+        assert len(registry.all_analyst_classes()) == 18
+        assert registry.bot_count() == 24
 
     def test_desk_sizes_match_the_org_chart(self):
         sizes = {desk: len(classes) for desk, classes in registry.PRIMARY_DESKS.items()}
-        assert sizes == {"news": 5, "equity": 3, "macro": 2, "ownership": 4}
+        assert sizes == {"news": 5, "equity": 4, "macro": 2, "ownership": 4}
         assert len(registry.REVIEW_DESK) == 3
 
     def test_every_bot_id_is_unique(self):

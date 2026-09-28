@@ -48,6 +48,8 @@ ROW_ALIASES: dict[str, tuple[str, ...]] = {
     "operating_cashflow": ("Operating Cash Flow", "Cash Flow From Continuing Operating Activities"),
     "capex": ("Capital Expenditure",),
     "free_cashflow": ("Free Cash Flow",),
+    "eps": ("Diluted EPS", "Basic EPS"),
+    "shares": ("Ordinary Shares Number", "Share Issued"),
 }
 
 
@@ -131,6 +133,54 @@ def get_financial_statements(stock: StockIdentity | str) -> DataResult[dict[str,
     note = None if not missing else f"missing: {', '.join(sorted(missing))}"
 
     return DataResult(value=statements, status=status, source=SOURCE, as_of=date.today(), note=note)
+
+
+def _dated(series: pd.Series | None) -> list[list[Any]]:
+    """[[iso date, value], ...] newest first - JSON-safe, for the evidence pack."""
+    if series is None:
+        return []
+    out = []
+    for stamp, value in series.items():
+        try:
+            day = pd.Timestamp(stamp).date().isoformat()
+        except Exception:
+            continue
+        if value is not None and not pd.isna(value):
+            out.append([day, float(value)])
+    return out
+
+
+def valuation_inputs(income, balance, cashflow, market_cap) -> dict[str, Any]:
+    """What the Valuation Analyst needs beyond today's ratios.
+
+    Earnings and book value per share at each fiscal year-end, so the stock
+    can be compared with its own past valuation, and free cash flow for the
+    cash yield. Per-share book value is equity over shares outstanding for
+    the same year-end; a year missing either is left out rather than guessed.
+    """
+    eps = _row(income, "eps")
+    equity = _row(balance, "equity")
+    shares = _row(balance, "shares")
+
+    bvps = None
+    if equity is not None and shares is not None:
+        common = equity.index.intersection(shares.index)
+        if len(common):
+            per_share = (equity[common] / shares[common]).replace([np.inf, -np.inf], np.nan).dropna()
+            bvps = per_share[per_share > 0].sort_index(ascending=False)
+
+    fcf = _latest(_row(cashflow, "free_cashflow"))
+    if fcf is None:
+        ocf, capex = _latest(_row(cashflow, "operating_cashflow")), _latest(_row(cashflow, "capex"))
+        if ocf is not None and capex is not None:
+            fcf = ocf + capex        # capex is reported as a negative outflow
+
+    return {
+        "eps_history": _dated(eps),
+        "bvps_history": _dated(bvps),
+        "free_cashflow": fcf,
+        "fcf_yield_pct": (fcf / market_cap * 100.0) if fcf is not None and market_cap else None,
+    }
 
 
 def get_fundamentals(stock: StockIdentity | str) -> DataResult[dict[str, Any]]:
@@ -220,6 +270,7 @@ def get_fundamentals(stock: StockIdentity | str) -> DataResult[dict[str, Any]]:
     }
 
     metrics["forensics"] = compute_forensics(income, balance, cashflow)
+    metrics.update(valuation_inputs(income, balance, cashflow, market_cap))
 
     filled = sum(1 for k, v in metrics.items() if k != "forensics" and v is not None)
     status = DataStatus.OK if filled >= 12 else DataStatus.PARTIAL

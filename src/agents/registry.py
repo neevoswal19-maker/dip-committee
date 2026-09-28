@@ -44,7 +44,7 @@ def build(cfg: Any = None) -> dict[str, list[Analyst]]:
 
 
 def bot_count() -> int:
-    """17 analysts + 5 leads + 1 CMIO."""
+    """18 analysts + 5 leads + 1 CMIO."""
     return len(all_analyst_classes()) + len(DESK_ORDER) + 1
 
 
