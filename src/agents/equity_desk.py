@@ -109,7 +109,7 @@ class FundamentalResearchAnalyst(Analyst):
             score, confidence, findings,
             [
                 Evidence("roe_pct", roe), Evidence("debt_to_equity", debt),
-                Evidence("revenue_cagr_3y_pct", growth), Evidence("pe_trailing", pe),
+                Evidence("revenue_cagr_3y_pct", growth), Evidence("pe_trailing", metrics.get("pe_trailing")),
             ],
             red_flags,
         )

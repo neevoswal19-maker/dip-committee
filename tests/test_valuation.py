@@ -140,6 +140,9 @@ def test_the_fundamental_bot_no_longer_scores_pe():
 
     cheap = FundamentalResearchAnalyst(CFG).run(Fund({**base, "pe_trailing": 8.0}))
     dear = FundamentalResearchAnalyst(CFG).run(Fund({**base, "pe_trailing": 90.0}))
+    # Both must actually have judged - two crashed bots also score the same.
+    assert cheap.data_available and dear.data_available
+    assert cheap.score > 1.0
     assert cheap.score == dear.score
 
 
