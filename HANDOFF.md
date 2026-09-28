@@ -680,6 +680,30 @@ GitHub:
 - Build on a branch, and merge to `main` only when CI is green. The 7:40
   morning job runs from `main`.
 
+## Valuation Analyst (added 2026-09-28): the committee is now 24 bots
+
+`ValuationAnalyst` sits on the equity desk (`src/agents/equity_desk.py`). It
+judges whether a stock is cheap against two things:
+- **its own history:** today's multiple against its median at the last
+  fiscal year-ends. That comes from `eps_history` / `bvps_history`, which
+  `fundamentals.valuation_inputs` adds, and the six years of prices the
+  committee already loads.
+- **its sector:** the median in the `sector_valuations` table, recomputed
+  weekly (Sunday) by `jobs/sector_valuations.py` across all Nifty 500
+  companies. The first run took 25 minutes and produced 11 sectors.
+
+**Lenders** (`quality_gate.debt_exempt_sectors`) are judged on P/B.
+**Everyone else** is judged on P/E, plus PEG (P/E ÷ 3-year profit CAGR) and
+free-cash-flow yield.
+
+Labels: CHEAP (score ≥ 1.5), FAIR, EXPENSIVE (≤ −1.5), LOSS-MAKING. The
+headline appears in the LONG-TERM BUY alert, and "looks cheap" appears
+against each candidate in the summary (`scan._valuation_of`).
+
+The Fundamental bot no longer scores P/E, since counting it twice would
+double its weight. Like the rest of the committee, this can't be
+backtested. The learning loop will score it once outcomes mature.
+
 ## Open questions
 
 - **Does conviction predict returns?** Still open, and now the most important
