@@ -115,6 +115,21 @@ class FundamentalResearchAnalyst(Analyst):
         )
 
 
+#: Below this many days of sales, receivables are too small for their growth
+#: rate to say anything about how revenue is booked.
+MATERIAL_RECEIVABLE_DAYS = 30
+
+#: Below this debt/equity, a big percentage jump in debt is a jump from almost
+#: nothing.
+LOW_DEBT_TO_EQUITY = 0.2
+
+#: Forensic measures that describe a lender's ordinary business.
+LENDER_EXEMPT_FIELDS = (
+    "cfo_to_pat_latest", "cfo_to_pat_avg_3y", "years_cfo_below_pat",
+    "receivables_vs_sales_gap_pct", "receivable_days", "debt_growth_yoy_pct",
+)
+
+
 class FinancialForensicsAnalyst(Analyst):
     """Do the accounts hold together. Holds the committee's veto."""
 
@@ -145,7 +160,24 @@ class FinancialForensicsAnalyst(Analyst):
                 if name in ("pledge", "governance"):
                     pledge_mentions += 1
 
-        return {**forensics, "governance_filings": pledge_mentions}
+        gathered = {**forensics, "governance_filings": pledge_mentions,
+                    "debt_to_equity": metrics.get("debt_to_equity")}
+
+        # For a lender, cash flow, receivables and debt are the business, not
+        # warning signs: lending money out is an operating cash outflow, loans
+        # are not trade receivables, and borrowing is the raw material. The
+        # Fundamental and Valuation bots judge lenders on measures that fit.
+        sector = (metrics.get("sector") or "").strip()
+        if sector in set(self.cfg.get("quality_gate.debt_exempt_sectors", []) or []):
+            for key in LENDER_EXEMPT_FIELDS:
+                gathered.pop(key, None)
+            gathered["lender"] = True
+            if not gathered.get("margin_direction") and not pledge_mentions:
+                return {
+                    "data_available": False,
+                    "note": "cash-flow, receivables and debt tests do not apply to a lender",
+                }
+        return gathered
 
     def judge(self, metrics: dict[str, Any]) -> Verdict:
         findings: list[str] = []
@@ -172,7 +204,11 @@ class FinancialForensicsAnalyst(Analyst):
                 red_flags.append("Cash flow below profit in 2 of the last 4 years - worth watching.")
 
         gap = metrics.get("receivables_vs_sales_gap_pct")
-        if gap is not None:
+        days = metrics.get("receivable_days")
+        # Growth on a tiny balance is noise: a company paid within a week can
+        # double its receivables and still be owed almost nothing.
+        material = days is not None and days >= MATERIAL_RECEIVABLE_DAYS
+        if gap is not None and material:
             components.append(band_score(gap * -1, [(10, 1.5), (0, 0.5), (-15, -1.0), (-30, -3.0), (-1e9, -4.5)]))
             findings.append(f"Receivables grew {gap:+.1f} percentage points faster than sales.")
             if gap > 35:
@@ -181,8 +217,12 @@ class FinancialForensicsAnalyst(Analyst):
                     f"Receivables outpacing sales by {gap:.0f} points - revenue may be booked "
                     f"on terms that are not being collected."
                 )
+        elif gap is not None:
+            findings.append(
+                f"Receivables grew {gap:+.1f} points faster than sales, but at {days or 0:.0f} days "
+                f"of sales the balance is too small for that to mean much."
+            )
 
-        days = metrics.get("receivable_days")
         if days is not None:
             findings.append(f"Receivable days {days:.0f}.")
             if days > 180:
@@ -190,7 +230,14 @@ class FinancialForensicsAnalyst(Analyst):
                 components.append(-2.0)
 
         debt_growth = metrics.get("debt_growth_yoy_pct")
-        if debt_growth is not None:
+        debt_to_equity = metrics.get("debt_to_equity")
+        low_base = debt_to_equity is not None and debt_to_equity < LOW_DEBT_TO_EQUITY
+        if debt_growth is not None and low_base:
+            findings.append(
+                f"Debt changed {debt_growth:+.1f}% year on year, from a low base "
+                f"(debt/equity {debt_to_equity:.2f})."
+            )
+        elif debt_growth is not None:
             findings.append(f"Debt changed {debt_growth:+.1f}% year on year.")
             if debt_growth > 40:
                 components.append(-2.5)

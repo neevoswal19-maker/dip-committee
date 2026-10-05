@@ -513,6 +513,88 @@ class TestEquityBots:
         result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
         assert result.veto is False
 
+    def test_forensics_ignores_receivable_growth_on_a_tiny_balance(self, cfg):
+        """Nestle India, 30 Sep 2026: paid in 7 days, so a 70-point jump is noise."""
+        from src.agents.equity_desk import FinancialForensicsAnalyst
+
+        metrics = {
+            "sector": "Consumer Defensive", "debt_to_equity": 0.05,
+            "forensics": {
+                "cfo_to_pat_latest": 0.91, "cfo_to_pat_avg_3y": 1.04, "years_cfo_below_pat": 1,
+                "receivables_vs_sales_gap_pct": 69.7, "receivable_days": 7.0,
+                "debt_growth_yoy_pct": 331.3, "data_years": 4,
+            },
+        }
+        result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
+
+        assert result.data_available
+        assert result.veto is False
+        assert not result.red_flags, "neither the receivables nor the debt jump is material"
+        assert any("too small" in f for f in result.key_findings)
+        assert any("low base" in f for f in result.key_findings)
+
+    def test_forensics_still_vetoes_material_receivables(self, cfg):
+        """Triveni Turbine, 1 Oct 2026: 125 days of sales and growing 95 points faster."""
+        from src.agents.equity_desk import FinancialForensicsAnalyst
+
+        metrics = {
+            "sector": "Industrials", "debt_to_equity": 0.0,
+            "forensics": {
+                "cfo_to_pat_latest": 0.32, "cfo_to_pat_avg_3y": 0.62, "years_cfo_below_pat": 2,
+                "receivables_vs_sales_gap_pct": 95.1, "receivable_days": 125.0,
+                "debt_growth_yoy_pct": -8.4, "data_years": 4,
+            },
+        }
+        result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
+
+        assert result.veto is True
+        assert any("Receivables outpacing sales by 95" in f for f in result.red_flags)
+
+    def test_forensics_flags_debt_growth_when_debt_is_material(self, cfg):
+        from src.agents.equity_desk import FinancialForensicsAnalyst
+
+        metrics = {
+            "sector": "Healthcare", "debt_to_equity": 0.6,
+            "forensics": {"cfo_to_pat_latest": 1.1, "years_cfo_below_pat": 0,
+                          "debt_growth_yoy_pct": 92.0, "data_years": 4},
+        }
+        result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
+
+        assert "Debt up 92% in a year." in result.red_flags
+
+    def test_forensics_does_not_veto_a_lender_on_negative_cash_flow(self, cfg):
+        """Shriram Finance, 29 Sep 2026: lending money out is an operating outflow."""
+        from src.agents.equity_desk import FinancialForensicsAnalyst
+
+        metrics = {
+            "sector": "Financial Services", "debt_to_equity": 4.0,
+            "forensics": {
+                "cfo_to_pat_latest": -1.32, "cfo_to_pat_avg_3y": -3.37, "years_cfo_below_pat": 4,
+                "receivables_vs_sales_gap_pct": -55.8, "receivable_days": 2.0,
+                "debt_growth_yoy_pct": 47.0, "data_years": 4,
+            },
+        }
+        result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
+
+        assert result.veto is False
+        assert result.data_available is False, "nothing left to judge is blind, not neutral"
+
+    def test_forensics_still_reads_a_lenders_margins(self, cfg):
+        from src.agents.equity_desk import FinancialForensicsAnalyst
+
+        metrics = {
+            "sector": "Financial Services",
+            "forensics": {"cfo_to_pat_latest": -1.3, "years_cfo_below_pat": 4,
+                          "margin_direction": "compressing", "net_margin_trend_pct": -3.0,
+                          "data_years": 4},
+        }
+        result = FinancialForensicsAnalyst(cfg).run(FakeContext(fundamentals=ok(metrics)))
+
+        assert result.data_available
+        assert result.veto is False
+        assert result.score < 0
+        assert not any("Operating cash flow" in f for f in result.key_findings)
+
     def test_fundamental_bot_rewards_quality(self, cfg):
         from src.agents.equity_desk import FundamentalResearchAnalyst
 
