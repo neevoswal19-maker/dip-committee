@@ -34,6 +34,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -148,6 +149,15 @@ def _fetch_text(url: str, *, referer: str | None = None, json_accept: bool = Tru
     if response.status_code != 200:
         raise RuntimeError(f"NSE {response.status_code} for {url}")
     return response.text
+
+
+def _symbol_param(symbol: str) -> str:
+    """A symbol made safe for a query string.
+
+    Left raw, the "&" in J&KBANK or M&M ends the parameter: NSE reads
+    `symbol=J` and returns nothing, and the bots that need filings go blind.
+    """
+    return quote(symbol, safe="")
 
 
 def _fetch_json(url: str, *, referer: str | None = None) -> Any:
@@ -340,7 +350,7 @@ def get_insider_trades(stock: StockIdentity | str, days: int = 90) -> DataResult
     """
     identity = StockIdentity(stock) if isinstance(stock, str) else stock
 
-    url = f"{BASE}/api/corporates-pit?index=equities&symbol={identity.symbol}"
+    url = f"{BASE}/api/corporates-pit?index=equities&symbol={_symbol_param(identity.symbol)}"
     referer = f"{BASE}/companies-listing/corporate-filings-insider-trading"
 
     def fetch() -> pd.DataFrame:
@@ -348,7 +358,7 @@ def get_insider_trades(stock: StockIdentity | str, days: int = 90) -> DataResult
         records = payload.get("data", payload) if isinstance(payload, dict) else payload
         return pd.DataFrame(records or [])
 
-    df = cached_fetch("insider", make_key("pit", identity.symbol), fetch)
+    df = cached_fetch("insider", make_key("pit", _symbol_param(identity.symbol)), fetch)
 
     if df is None:
         return DataResult.unavailable(SOURCE, f"insider feed unavailable for {identity.symbol}")
@@ -402,7 +412,7 @@ def get_insider_trades(stock: StockIdentity | str, days: int = 90) -> DataResult
 def get_shareholding_pattern(stock: StockIdentity | str) -> DataResult[pd.DataFrame]:
     """Quarterly promoter / FII / DII / public holding percentages."""
     identity = StockIdentity(stock) if isinstance(stock, str) else stock
-    url = f"{BASE}/api/corporate-share-holdings-master?index=equities&symbol={identity.symbol}"
+    url = f"{BASE}/api/corporate-share-holdings-master?index=equities&symbol={_symbol_param(identity.symbol)}"
     referer = f"{BASE}/companies-listing/corporate-filings-shareholding-pattern"
 
     def fetch() -> pd.DataFrame:
@@ -410,7 +420,7 @@ def get_shareholding_pattern(stock: StockIdentity | str) -> DataResult[pd.DataFr
         records = payload.get("data", payload) if isinstance(payload, dict) else payload
         return pd.DataFrame(records or [])
 
-    df = cached_fetch("shareholding", make_key("shp", identity.symbol), fetch)
+    df = cached_fetch("shareholding", make_key("shp", _symbol_param(identity.symbol)), fetch)
 
     if df is None:
         return DataResult.unavailable(SOURCE, f"shareholding feed unavailable for {identity.symbol}")
@@ -433,7 +443,7 @@ def get_corporate_announcements(stock: StockIdentity | str, days: int = 90) -> D
     from_date = to_date - timedelta(days=days)
 
     url = (
-        f"{BASE}/api/corporate-announcements?index=equities&symbol={identity.symbol}"
+        f"{BASE}/api/corporate-announcements?index=equities&symbol={_symbol_param(identity.symbol)}"
         f"&from_date={from_date.strftime('%d-%m-%Y')}&to_date={to_date.strftime('%d-%m-%Y')}"
     )
     referer = f"{BASE}/companies-listing/corporate-filings-announcements"
@@ -445,7 +455,7 @@ def get_corporate_announcements(stock: StockIdentity | str, days: int = 90) -> D
         # The attachment body can run to megabytes and is useless to the bots.
         return df.drop(columns=[c for c in ("attchmntText",) if c in df.columns])
 
-    df = cached_fetch("news", make_key("ann", identity.symbol, days), fetch)
+    df = cached_fetch("news", make_key("ann", _symbol_param(identity.symbol), days), fetch)
 
     if df is None:
         return DataResult.unavailable(SOURCE, f"announcements unavailable for {identity.symbol}")
