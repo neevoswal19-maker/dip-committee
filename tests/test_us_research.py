@@ -88,9 +88,9 @@ SP500_HTML = """
 </table>"""
 
 NDX_HTML = """
-<table id="constituents"><tr><th>Company</th><th>Ticker</th><th>GICS Sector</th></tr>
-<tr><td>Apple Inc.</td><td>AAPL</td><td>Information Technology</td></tr>
-<tr><td>Atlassian</td><td>TEAM</td><td>Information Technology</td></tr>
+<table id="constituents"><tr><th>Ticker</th><th>Company</th><th>ICB Industry [1]</th></tr>
+<tr><td>AAPL</td><td>Apple Inc.</td><td>Technology</td></tr>
+<tr><td>TEAM</td><td>Atlassian</td><td>Technology</td></tr>
 </table>"""
 
 
@@ -102,6 +102,7 @@ def test_constituent_tables_parse_into_us_identities():
     ndx = us_universe.parse_constituents(NDX_HTML)
     assert [s.symbol for s in ndx] == ["AAPL", "TEAM"]
     assert ndx[1].name == "Atlassian"
+    assert ndx[1].sector == "Technology"      # ICB column, footnote marker stripped
 
 
 def test_the_union_drops_duplicates(monkeypatch):
