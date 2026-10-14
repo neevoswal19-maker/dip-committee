@@ -330,12 +330,13 @@ def long_term_arrays(prices: dict[str, pd.DataFrame], cfg, *, every: int = 5):
 
 def run_long_term(plan: LongTermPlan, bars, signals, ranks, *, start: date, end: date,
                   cfg, regime_at=None, capital: float = 1_000_000.0,
-                  position_pct: float = 8.0, max_positions: int = 15) -> SimResult:
+                  position_pct: float = 8.0, max_positions: int = 15,
+                  cost_fn=None) -> SimResult:
     return simulate(
         bars, signals, ranks, lambda symbol: LongTermPolicy(plan),
         strategy=f"long_term_{plan.key}", start=start, end=end, mode=NEXT_OPEN,
         position_value=capital * position_pct / 100.0, max_positions=max_positions,
-        initial_capital=capital, cfg=cfg, regime_at=regime_at,
+        initial_capital=capital, cfg=cfg, regime_at=regime_at, cost_fn=cost_fn,
     )
 
 
