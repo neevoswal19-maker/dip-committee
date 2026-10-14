@@ -186,3 +186,53 @@ def test_recommend_picks_the_faster_passing_version():
     assert us_research.recommend([a, b])[0] == "dip_volume"
     fail = us_research.judge(_outcome(5, -18, 12, -24, 80), 50)
     assert us_research.recommend([fail])[0] is None
+
+
+# --- Per stock ------------------------------------------------------------------------
+
+
+def _spy():
+    index = pd.bdate_range("2020-01-01", periods=10)
+    close = pd.Series([100, 101, 102, 103, 104, 105, 106, 107, 108, 110.0], index=index)
+    return pd.DataFrame({"open": close - 0.5, "close": close})
+
+
+def test_spy_return_runs_from_the_entry_open_to_the_exit_close():
+    spy = _spy()
+    got = us_research.spy_return(spy, date(2020, 1, 2), date(2020, 1, 14))
+    assert got == pytest.approx((110.0 / 100.5 - 1) * 100)
+
+
+def test_each_trade_is_measured_against_spy_over_its_own_dates():
+    rows = [{"symbol": "AAA", "entry_date": date(2020, 1, 2), "exit_date": date(2020, 1, 14),
+             "return_pct": 20.0, "sessions": 9}]
+    out = us_research.with_excess(rows, _spy())
+    assert out[0]["excess_pct"] == pytest.approx(20.0 - (110.0 / 100.5 - 1) * 100)
+
+
+def _rows(returns, spy_pct):
+    return [{"return_pct": r, "spy_pct": spy_pct, "excess_pct": r - spy_pct, "sessions": 100} for r in returns]
+
+
+def test_summary_counts_wins_against_cash_and_against_spy():
+    s = us_research.summarize(_rows([10.0, -5.0, 4.0], spy_pct=5.0))
+    assert s["trades"] == 3
+    assert s["win_rate"] == pytest.approx(2 / 3)
+    assert s["beat_spy_rate"] == pytest.approx(1 / 3)
+    assert s["avg_excess_pct"] == pytest.approx(3.0 - 5.0)
+    assert s["profit_factor"] == pytest.approx(14.0 / 5.0)
+
+
+def test_the_group_must_beat_spy_in_both_periods_with_enough_trades():
+    good = us_research.summarize(_rows([8.0] * 40, spy_pct=5.0))
+    weak = us_research.summarize(_rows([4.0] * 40, spy_pct=5.0))
+    few = us_research.summarize(_rows([8.0] * 10, spy_pct=5.0))
+    assert us_research.judge_group({"2014-21": good, "2022+": good})[0]
+    ok, reasons = us_research.judge_group({"2014-21": good, "2022+": weak})
+    assert not ok and "2022+" in reasons[0]
+    assert not us_research.judge_group({"2014-21": few, "2022+": good})[0]
+
+
+def test_dow_2014_list_is_thirty_names():
+    assert len(CFG.get("us.dow_2014")) == 30
+    assert "RTX" in CFG.get("us.dow_2014")          # United Technologies today

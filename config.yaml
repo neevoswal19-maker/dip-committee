@@ -496,6 +496,13 @@ us:
     down_volume_ratio_min: 1.05
     down_volume_persistence: 2
     down_volume_lookback: 10
+  # Dow Jones Industrial Average members in January 2014: the pre-registered
+  # group for the per-stock test, chosen by others before the results were
+  # known. United Technologies trades as RTX since its 2020 merger.
+  dow_2014: [MMM, AXP, T, BA, CAT, CVX, CSCO, KO, DD, XOM, GE, GS, HD, INTC, IBM,
+             JNJ, JPM, MCD, MRK, MSFT, NKE, PFE, PG, TRV, UNH, RTX, VZ, V, WMT, DIS]
+  # Shown for interest only, never judged: today's largest companies.
+  megacaps_today: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, TSLA, BRK.B, JPM]
   etfs:                              # hand-picked: broad, sector, bonds, gold
     - SPY
     - VOO
