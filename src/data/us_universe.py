@@ -10,11 +10,9 @@ is large, because the index adds winners as they grow.
 
 from __future__ import annotations
 
-import io
 import logging
+import re
 from typing import Any
-
-import pandas as pd
 
 from src.data.cache import cached_fetch, make_key
 from src.data.provider import DataResult, DataStatus, StockIdentity
@@ -25,7 +23,7 @@ SOURCE = "wikipedia"
 
 PAGES = {
     "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-    "nasdaq100": "https://en.wikipedia.org/wiki/Nasdaq-100",
+    "nasdaq100": "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies",
 }
 
 #: Wikipedia refuses requests without a descriptive User-Agent.
@@ -35,32 +33,56 @@ USER_AGENT = "dip-committee/1.0 (research; https://github.com/neevoswal19-maker/
 MIN_ROWS = {"sp500": 450, "nasdaq100": 90}
 
 
+def _headers(table) -> list[str]:
+    first = table.find("tr")
+    cells = first.find_all(["th", "td"]) if first else []
+    # "Symbol[1]" -> "Symbol": footnote markers are not part of the name.
+    return [re.sub(r"\[.*?\]", "", c.get_text(" ", strip=True)).strip() for c in cells]
+
+
+def _constituent_table(soup):
+    """id="constituents" if present, else the first table with a ticker column."""
+    table = soup.find("table", id="constituents")
+    if table is not None:
+        return table
+    for candidate in soup.find_all("table"):
+        if {"Symbol", "Ticker"} & set(_headers(candidate)):
+            return candidate
+    return None
+
+
 def parse_constituents(html: str) -> list[StockIdentity]:
-    """The table with id="constituents": ticker, name and GICS sector."""
-    tables = pd.read_html(io.StringIO(html), attrs={"id": "constituents"})
-    if not tables:
+    """Ticker, name and GICS sector from a Wikipedia constituents table.
+
+    Parsed with BeautifulSoup's built-in parser rather than pandas.read_html,
+    which falls back to html5lib (not installed) on Wikipedia's markup.
+    """
+    from bs4 import BeautifulSoup
+
+    table = _constituent_table(BeautifulSoup(html, "html.parser"))
+    if table is None:
         return []
-    table = tables[0]
-    columns = {str(c).strip(): c for c in table.columns}
-    symbol_col = next((columns[c] for c in ("Symbol", "Ticker") if c in columns), None)
-    if symbol_col is None:
+    headers = _headers(table)
+    position = {name: i for i, name in enumerate(headers)}
+    symbol_i = next((position[c] for c in ("Symbol", "Ticker") if c in position), None)
+    if symbol_i is None:
         return []
-    name_col = next((columns[c] for c in ("Security", "Company") if c in columns), None)
-    sector_col = columns.get("GICS Sector")
-    industry_col = columns.get("GICS Sub-Industry")
+    name_i = next((position[c] for c in ("Security", "Company") if c in position), None)
+    # The Nasdaq-100 page classifies by ICB, the S&P 500 page by GICS.
+    sector_i = next((position[c] for c in ("GICS Sector", "ICB Industry") if c in position), None)
+    industry_i = next((position[c] for c in ("GICS Sub-Industry", "ICB Subsector") if c in position), None)
+
+    def cell(cells, i):
+        return None if i is None or i >= len(cells) else cells[i] or None
 
     out = []
-    for _, row in table.iterrows():
-        symbol = str(row[symbol_col]).strip().upper()
-        if not symbol or symbol == "NAN":
+    for row in table.find_all("tr")[1:]:
+        cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
+        symbol = (cell(cells, symbol_i) or "").strip().upper()
+        if not symbol:
             continue
-        out.append(StockIdentity(
-            symbol=symbol,
-            name=None if name_col is None else str(row[name_col]).strip(),
-            sector=None if sector_col is None else str(row[sector_col]).strip(),
-            industry=None if industry_col is None else str(row[industry_col]).strip(),
-            market="US",
-        ))
+        out.append(StockIdentity(symbol=symbol, name=cell(cells, name_i), sector=cell(cells, sector_i),
+                                 industry=cell(cells, industry_i), market="US"))
     return out
 
 
