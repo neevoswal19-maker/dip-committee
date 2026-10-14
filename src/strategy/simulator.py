@@ -258,6 +258,7 @@ def simulate(
     cfg: Any = None,
     regime_at: Callable[[date], str | None] | None = None,
     with_costs: bool = True,
+    cost_fn: Callable[[str, int, float], float] | None = None,
 ) -> SimResult:
     """Walk the calendar, entering on signals and managing trades by policy.
 
@@ -286,6 +287,8 @@ def simulate(
     def cost_of(side: str, qty: int, price: float) -> float:
         if not with_costs or qty <= 0:
             return 0.0
+        if cost_fn is not None:          # another market's schedule, e.g. US stocks
+            return cost_fn(side, qty, price)
         return charge_model.estimate(side, qty, price, cfg=cfg).total
 
     def fill(trade: Trade, side: str, qty: int, price: float, when: date, reason: str) -> None:

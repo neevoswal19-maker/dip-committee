@@ -468,3 +468,62 @@ intraday:
     gst_pct: 18.0
     stt_sell_pct: 0.025
     stamp_buy_pct: 0.003
+
+# US stocks and ETFs through Groww (GIFT City, cleared by Alpaca).
+# RESEARCH ONLY: nothing here is scanned or alerted until the US research
+# (jobs/us_research.py) passes its pre-registered gate.
+# -----------------------------------------------------------------------------
+us:
+  enabled: false
+  costs:                             # groww.in/pricing/us-stocks, Oct 2026
+    brokerage_pct: 0.1
+    brokerage_min_usd: 1.0
+    gst_pct: 18.0
+    sec_fee_pct: 0.00206             # sells only
+    finra_per_share_usd: 0.000195    # sells only
+    finra_max_usd: 9.79
+    cat_per_share_usd: 0.000003
+    # Rupee-dollar conversion at the bank's rate, which Groww does not
+    # publish. Assumed per order; the research also reports 0% and 1%.
+    fx_markup_pct: 0.5
+  research:
+    capital_usd: 100000              # brokerage at 8% positions matches a ~Rs 80k trade
+    position_pct: 8.0
+    max_positions: 15
+    etf_max_positions: 5
+    # The US has no delivery data. Stand-in, tested with and without: volume
+    # on down days against its 20-day average, the same thresholds as delivery.
+    down_volume_ratio_min: 1.05
+    down_volume_persistence: 2
+    down_volume_lookback: 10
+  etfs:                              # hand-picked: broad, sector, bonds, gold
+    - SPY
+    - VOO
+    - VTI
+    - QQQ
+    - DIA
+    - IWM
+    - VEA
+    - VWO
+    - SCHD
+    - VIG
+    - XLK
+    - XLF
+    - XLV
+    - XLE
+    - XLI
+    - XLY
+    - XLP
+    - XLU
+    - XLB
+    - XLRE
+    - XLC
+    - SMH
+    - SOXX
+    - IBB
+    - ITA
+    - TLT
+    - IEF
+    - BND
+    - GLD
+    - SLV

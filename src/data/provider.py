@@ -108,10 +108,16 @@ class StockIdentity:
     sector: str | None = None
     industry: str | None = None
     isin: str | None = None
+    market: str = "IN"               # IN (NSE) | US
 
     @property
     def yahoo(self) -> str:
-        """Yahoo Finance wants an .NS suffix for NSE-listed equities."""
+        """Yahoo Finance wants an .NS suffix for NSE-listed equities.
+
+        US tickers go bare, with share classes dashed: BRK.B is BRK-B there.
+        """
+        if self.market == "US":
+            return self.symbol.replace(".", "-")
         return f"{self.symbol}.NS"
 
     def __str__(self) -> str:

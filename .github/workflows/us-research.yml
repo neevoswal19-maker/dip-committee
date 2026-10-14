@@ -1,0 +1,44 @@
+name: US research
+
+# Backtests the live dip strategy on the S&P 500 + Nasdaq-100 and on 30 ETFs,
+# after Groww's US costs, against holding SPY, and uploads
+# reports/us_research.md with the trades behind it. Research only: nothing is
+# alerted and nothing is written to the database, so it needs no secrets.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["us-research/**"]
+
+concurrency:
+  group: us-research-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the research
+        run: python jobs/us_research.py
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-research-${{ github.run_id }}
+          path: reports/us_*
+          retention-days: 30
+          if-no-files-found: warn
