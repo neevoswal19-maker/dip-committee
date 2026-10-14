@@ -171,3 +171,92 @@ def recommend(outcomes: list[Outcome]) -> tuple[str | None, str]:
         return None, "No version beat holding SPY on both growth and worst fall in both periods."
     best = max(passing, key=lambda o: o.periods["2022+"]["curve"]["cagr_pct"])
     return best.key, f"{best.label} passed in both periods and grew fastest since 2022."
+
+
+# --- Per stock: every dip as its own trade ----------------------------------------------
+#
+# The portfolio test above takes at most 15 positions, so most dips were never
+# bought and it cannot say whether dips in any one stock pay. This runs every
+# signal as an independent trade (one open trade per stock at a time) and
+# compares each with buying SPY on the same entry day and selling it on the
+# same exit day.
+#
+# Pre-registered, before any result was seen: the headline group is the 30
+# Dow Jones Industrial Average members as of January 2014, a list nobody chose
+# with hindsight. It passes only if, in both 2014-21 and 2022 onward, its dip
+# trades beat SPY over the same dates on average after costs, with at least
+# PER_STOCK_PASS["min_trades"] trades in each period. Results for all 518
+# stocks, by sector and for today's largest companies are shown for
+# information only: today's giants are giants because they went up.
+
+PER_STOCK_PASS = {"min_trades": 30, "min_avg_excess_pct": 0.0}
+
+
+def every_signal(plan, bars, signals, ranks, *, start: date, end: date, cfg, cost_fn,
+                 position_value: float = 8_000.0, regime_at=None):
+    from src.strategy.exit_policies import LongTermPolicy
+    from src.strategy.simulator import NEXT_OPEN, simulate
+
+    return simulate(bars, signals, ranks, lambda symbol: LongTermPolicy(plan),
+                    strategy=f"per_stock_{plan.key}", start=start, end=end, mode=NEXT_OPEN,
+                    position_value=position_value, max_positions=None, cfg=cfg,
+                    regime_at=regime_at, cost_fn=cost_fn).trades
+
+
+def spy_return(spy: pd.DataFrame, entry: date, exit_: date) -> float | None:
+    """SPY, dividends reinvested, from the entry day's open to the exit day's close."""
+    if spy is None or spy.empty or entry is None or exit_ is None:
+        return None
+    after = spy[spy.index >= pd.Timestamp(entry)]
+    upto = spy[spy.index <= pd.Timestamp(exit_)]
+    if after.empty or upto.empty:
+        return None
+    start_price = float(after["open"].iloc[0]) if "open" in after.columns else float(after["close"].iloc[0])
+    return (float(upto["close"].iloc[-1]) / start_price - 1.0) * 100.0
+
+
+def with_excess(rows: list[dict[str, Any]], spy: pd.DataFrame) -> list[dict[str, Any]]:
+    out = []
+    for row in rows:
+        bench = spy_return(spy, row.get("entry_date"), row.get("exit_date"))
+        out.append(dict(row, spy_pct=bench,
+                        excess_pct=None if bench is None else row["return_pct"] - bench))
+    return out
+
+
+def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = [r for r in rows if r.get("excess_pct") is not None]
+    if not rows:
+        return {"trades": 0}
+    returns = [r["return_pct"] for r in rows]
+    gains = sum(x for x in returns if x > 0)
+    losses = -sum(x for x in returns if x < 0)
+    return {
+        "trades": len(rows),
+        "win_rate": sum(1 for x in returns if x > 0) / len(rows),
+        "avg_return_pct": float(np.mean(returns)),
+        "avg_spy_pct": float(np.mean([r["spy_pct"] for r in rows])),
+        "avg_excess_pct": float(np.mean([r["excess_pct"] for r in rows])),
+        "beat_spy_rate": sum(1 for r in rows if r["excess_pct"] > 0) / len(rows),
+        "profit_factor": gains / losses if losses > 0 else float("inf"),
+        "avg_sessions": float(np.mean([r.get("sessions") or 0 for r in rows])),
+    }
+
+
+def judge_group(by_period: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
+    reasons = []
+    for name, s in by_period.items():
+        n = s.get("trades", 0)
+        if n < PER_STOCK_PASS["min_trades"]:
+            reasons.append(f"{name}: only {n} trades (need {PER_STOCK_PASS['min_trades']})")
+        if n and s["avg_excess_pct"] <= PER_STOCK_PASS["min_avg_excess_pct"]:
+            reasons.append(f"{name}: dip trades averaged {s['avg_return_pct']:+.1f}% against "
+                           f"{s['avg_spy_pct']:+.1f}% for SPY over the same dates")
+    return not reasons, reasons
+
+
+def group_by(rows: list[dict[str, Any]], key) -> dict[str, dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(key(row), []).append(row)
+    return {k: summarize(v) for k, v in groups.items()}
