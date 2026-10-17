@@ -34,6 +34,7 @@ and the earnings blackout (historical results dates are not available).
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Callable
 
@@ -43,6 +44,8 @@ import pandas as pd
 from src import charges as charge_model
 from src import indicators as ind
 from src.strategy.simulator import Bars, Order, Trade
+
+log = logging.getLogger(__name__)
 
 
 # --- Features and signals ---------------------------------------------------------------
@@ -187,3 +190,49 @@ def etf_costs(cfg: Any):
         stt = qty * price * 0.00001 if side == "SELL" else 0.0
         return breakdown.total - breakdown.stt + stt
     return cost
+
+
+# --- Data repair and stand-ins ----------------------------------------------------------
+
+
+def repair_splits(frame: pd.DataFrame) -> pd.DataFrame:
+    """Undo unadjusted unit splits: an index or ETF never genuinely falls 75%
+    or quadruples in a day, so such a jump is rescaled out of earlier prices.
+    GOLDBEES and NIFTYBEES both split without Yahoo adjusting the history."""
+    out = frame.copy()
+    close = out["close"]
+    ratio = close / close.shift(1)
+    for when in ratio.index[(ratio < 0.25) | (ratio > 4.0)]:
+        factor = float(ratio.loc[when])
+        earlier = out.index < when
+        for column in ("open", "high", "low", "close", "adj_close"):
+            if column in out.columns:
+                out.loc[earlier, column] = out.loc[earlier, column] * factor
+        if "volume" in out.columns:
+            out.loc[earlier, "volume"] = out.loc[earlier, "volume"] / factor
+        log.info("Repaired an unadjusted split on %s (x%.4f)", when.date(), factor)
+    return out
+
+
+def composite(members: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
+    """Equal-weight index of a sector's largest stocks, chained from daily
+    returns so a member listing later does not make the level jump."""
+    if len(members) < 3:
+        return None
+    frames = {s: _adjust(f) for s, f in members.items()}
+    closes = pd.DataFrame({s: f["close"] for s, f in frames.items()}).sort_index()
+    returns = closes.pct_change(fill_method=None).mean(axis=1, skipna=True).fillna(0.0)
+    level = 100.0 * (1.0 + returns).cumprod()
+    out = pd.DataFrame(index=level.index)
+    for column in ("open", "high", "low"):
+        rel = pd.DataFrame({s: f[column] / f["close"] for s, f in frames.items()}).reindex(level.index)
+        out[column] = level * rel.mean(axis=1, skipna=True)
+    out["close"] = level
+    out["volume"] = float("nan")
+    return out.dropna()
+
+
+def _adjust(frame: pd.DataFrame) -> pd.DataFrame:
+    from src.strategy.swing import adjust_for_dividends
+
+    return adjust_for_dividends(frame)
