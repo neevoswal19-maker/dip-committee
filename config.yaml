@@ -344,7 +344,16 @@ committee:
     ownership: 0.30
     review: 0.15
   forensics_veto: true               # forensics can kill any candidate
-  min_conviction_to_alert: 60
+  # The committee is a gate, not a score to beat (decided 2026-10-17). A stock
+  # that passed the screen is a BUY unless the committee objects: a forensics
+  # veto, or conviction below 50 (the desks net negative). Why not 60: across
+  # the first 29 unvetoed runs conviction ran 48.8-57.2 and never reached it -
+  # the news desk averages -0.42 on any dip and a third of verdicts are blind
+  # zeros, so 60 was unreachable. And the 14.6%/yr backtest bought every
+  # screen pass; the committee cannot be backtested, and conviction has not
+  # been shown to predict returns. Sizing still scales with conviction, and
+  # the caps (15 stocks, 6% total risk, sector limits) still apply.
+  min_conviction_to_alert: 50
 
 # -----------------------------------------------------------------------------
 # SELF-LEARNING - auto-apply with guardrails

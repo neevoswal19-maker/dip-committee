@@ -294,6 +294,29 @@ class TestCmio:
         assert "data failure" in report.summary.lower()
         assert "not a view on the company" in report.summary.lower()
 
+    def test_a_mildly_positive_committee_is_a_buy(self, cfg):
+        """The committee is a gate: 55 used to be WATCH, and nothing ever reached 60."""
+        report = self._decide(desks_all_at(0.5), cfg)
+        assert report.conviction == pytest.approx(55.0)
+        assert report.stance == "BUY"
+        assert report.sizing["is_buy"] is True
+        assert report.sizing["recommendation"] == "CONSERVATIVE"
+
+    def test_a_net_negative_committee_is_only_a_watch(self, cfg):
+        report = self._decide(desks_all_at(-0.2), cfg)
+        assert report.conviction == pytest.approx(48.0)
+        assert report.stance == "WATCH"
+
+    def test_a_buy_the_sizing_rules_refuse_is_shown_as_watch(self, cfg, monkeypatch):
+        """A BUY alert must always carry a size."""
+        real = cmio.sizing_rules.size_position
+        monkeypatch.setattr(cmio.sizing_rules, "size_position",
+                            lambda **kw: real(**{**kw, "forensics_veto": True}))
+        report = self._decide(desks_all_at(0.5), cfg)
+        assert report.conviction == pytest.approx(55.0)
+        assert report.sizing["is_buy"] is False
+        assert report.stance == "WATCH"
+
     def test_conviction_flows_into_a_rupee_size(self, cfg):
         report = self._decide(desks_all_at(3.0), cfg)
         assert report.sizing is not None

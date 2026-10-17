@@ -101,7 +101,7 @@ def decide(
 
     # --- Stance
     if not report.forensics_veto:
-        alert_floor = float(cfg.get("committee.min_conviction_to_alert", 60))
+        alert_floor = float(cfg.get("committee.min_conviction_to_alert", 50))
         if report.conviction >= alert_floor:
             report.stance = "BUY"
         elif report.conviction >= 45:
@@ -129,10 +129,11 @@ def decide(
     # --- Market regime. Applied after sizing so the size shown is the one
     # the policy actually allows, and recorded either way so real trades can
     # later test whether the regime mattered.
-    was_buy = decision.is_buy
     decision = regime_rules.apply_policy(decision, market_regime, cfg)
-    if was_buy and not decision.is_buy and report.stance == "BUY":
-        # Conviction did not change; the market did. WATCH says exactly that.
+    if report.stance == "BUY" and not decision.is_buy:
+        # The committee did not object, but the sizing rules (no edge, a cap
+        # reached) or the market regime would not put money in. A BUY alert
+        # must always carry a size, so WATCH says exactly that.
         report.stance = "WATCH"
 
     report.sizing = decision.to_dict()
