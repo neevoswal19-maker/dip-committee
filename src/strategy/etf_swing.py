@@ -196,9 +196,15 @@ def etf_costs(cfg: Any):
 
 
 def repair_splits(frame: pd.DataFrame) -> pd.DataFrame:
-    """Undo unadjusted unit splits: an index or ETF never genuinely falls 75%
+    """Undo impossible one-day jumps: an index or ETF never genuinely falls 75%
     or quadruples in a day, so such a jump is rescaled out of earlier prices.
-    GOLDBEES and NIFTYBEES both split without Yahoo adjusting the history."""
+
+    Yahoo's GOLDBEES and NIFTYBEES histories have two days, 19-20 December
+    2019, quoted at 1/100 and 1/10 of the surrounding prices (the unit splits
+    leaking into an otherwise adjusted series). The drop and the jump back
+    are both rescaled, which leaves every other day unchanged and fixes those
+    two; a genuine unadjusted split is fixed the same way.
+    """
     out = frame.copy()
     for column in ("open", "high", "low", "close", "adj_close", "volume"):
         if column in out.columns:
