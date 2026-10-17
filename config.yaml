@@ -534,3 +534,29 @@ us:
     - BND
     - GLD
     - SLV
+
+# ETF relative-strength swing systems (2A metals, 2B sectors, 3 portfolio).
+# RESEARCH ONLY: proposed 2026-10-17, tested by jobs/etf_swing_research.py.
+# Nothing is scanned or alerted from here.
+# -----------------------------------------------------------------------------
+etf_swing:
+  capital: 500000
+  risk_per_trade: 5000               # 1% at the 1.5 x ATR stop
+  max_position_value: 140000
+  max_positions: 3
+  metals:                            # name: [ETF, long-history stand-in]
+    gold: [GOLDBEES.NS, GOLDBEES.NS]
+    silver: [SILVERBEES.NS, "SI=F*USDINR"]   # SILVERBEES lists in 2022
+  sectors:                           # name: [ETF, index stand-in, regime-gated]
+    it: [ITBEES.NS, "^CNXIT", true]
+    metal: [METALIETF.NS, "^CNXMETAL", true]
+    auto: [AUTOBEES.NS, "^CNXAUTO", true]
+    psu_bank: [PSUBNKBEES.NS, "^CNXPSUBANK", true]
+    pharma: [PHARMABEES.NS, "^CNXPHARMA", false]   # a defensive slot in bear regimes
+  # Breadth: today's five largest members (a mild survivorship shortcut).
+  breadth:
+    it: [TCS, INFY, HCLTECH, WIPRO, TECHM]
+    metal: [TATASTEEL, HINDALCO, JSWSTEEL, VEDL, JINDALSTEL]
+    auto: [M&M, MARUTI, BAJAJ-AUTO, EICHERMOT, TVSMOTOR]
+    psu_bank: [SBIN, BANKBARODA, PNB, CANBK, UNIONBANK]
+    pharma: [SUNPHARMA, DRREDDY, CIPLA, DIVISLAB, LUPIN]
