@@ -200,6 +200,9 @@ def repair_splits(frame: pd.DataFrame) -> pd.DataFrame:
     or quadruples in a day, so such a jump is rescaled out of earlier prices.
     GOLDBEES and NIFTYBEES both split without Yahoo adjusting the history."""
     out = frame.copy()
+    for column in ("open", "high", "low", "close", "adj_close", "volume"):
+        if column in out.columns:
+            out[column] = out[column].astype(float)   # rescaling makes whole volumes fractional
     close = out["close"]
     ratio = close / close.shift(1)
     for when in ratio.index[(ratio < 0.25) | (ratio > 4.0)]:
@@ -229,7 +232,7 @@ def composite(members: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
         out[column] = level * rel.mean(axis=1, skipna=True)
     out["close"] = level
     out["volume"] = float("nan")
-    return out.dropna()
+    return out.dropna(subset=["open", "high", "low", "close"])
 
 
 def _adjust(frame: pd.DataFrame) -> pd.DataFrame:
