@@ -258,6 +258,8 @@ def simulate(
     cfg: Any = None,
     regime_at: Callable[[date], str | None] | None = None,
     with_costs: bool = True,
+    cost_fn: Callable[[str, int, float], float] | None = None,
+    size_fn: Callable[[str, Bars, int, float], float] | None = None,
 ) -> SimResult:
     """Walk the calendar, entering on signals and managing trades by policy.
 
@@ -286,6 +288,8 @@ def simulate(
     def cost_of(side: str, qty: int, price: float) -> float:
         if not with_costs or qty <= 0:
             return 0.0
+        if cost_fn is not None:          # another market's schedule, e.g. US stocks
+            return cost_fn(side, qty, price)
         return charge_model.estimate(side, qty, price, cfg=cfg).total
 
     def fill(trade: Trade, side: str, qty: int, price: float, when: date, reason: str) -> None:
@@ -321,7 +325,10 @@ def simulate(
 
     def open_trade(symbol: str, b: Bars, signal_i: int, fill_i: int, price: float) -> None:
         buy_price = _slip(price, "BUY", slippage if with_costs else 0.0)
-        value = position_value * first_tranche
+        # A sizing rule (e.g. a fixed rupee risk to the stop) can replace the
+        # fixed position value: (symbol, bars, signal bar, fill price) -> rupees.
+        value = (size_fn(symbol, b, signal_i, buy_price) if size_fn is not None
+                 else position_value * first_tranche)
         qty = int(value // buy_price) if buy_price > 0 else 0
         if qty < 1:
             return
