@@ -63,7 +63,7 @@ def pct(x) -> str:
 INDEX_ALIASES = {
     "^CNXMETAL": ["^CNXMETAL", "NIFTY_METAL.NS", "^NIFTYMETAL"],
     "^CNXAUTO": ["^CNXAUTO", "NIFTY_AUTO.NS", "^NIFTYAUTO"],
-    "^CNXPSUBANK": ["^CNXPSUBANK", "NIFTY_PSU_BANK.NS", "^NIFTYPSUBANK"],
+    "^CNXPSUBANK": ["^CNXPSUBANK", "NIFTY_PSU_BANK.NS", "^NIFTYPSUBANK", "PSUBNKBEES.NS"],
 }
 
 
@@ -84,7 +84,9 @@ def history(symbol: str, members: dict[str, pd.DataFrame] | None = None) -> pd.D
         return in_rupees(symbol.split("*")[0])
     for candidate in INDEX_ALIASES.get(symbol, [symbol]):
         frame = prices.get_index_history(candidate, years=YEARS).value
-        if frame is not None and not frame.empty:
+        # A stub of a few rows is not a history; try the next name.
+        if frame is not None and len(frame) >= 250:
+            log.info("%s: using %s from %s (%d rows)", symbol, candidate, frame.index[0].date(), len(frame))
             return swing.adjust_for_dividends(es.repair_splits(frame))
     if members:
         log.info("No Yahoo history for %s; using an equal-weight index of %d members", symbol, len(members))
