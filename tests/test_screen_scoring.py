@@ -122,3 +122,34 @@ def test_missing_metrics_do_not_crash_or_inflate(cfg):
     assert score_candidate({}, cfg) == 0.0
     partial = score_candidate({"pct_vs_dma_long": 10.0}, cfg)
     assert 0.0 < partial <= 30.0
+
+
+# --- Delivery no longer gates (2026-10-17) ------------------------------------------
+
+
+def test_delivery_is_off_as_a_gate_in_the_live_config():
+    from src import screener
+    from src.config import load_config
+
+    assert screener.delivery_gates(load_config()) is False
+
+
+def test_a_failed_delivery_stage_passes_with_its_reasons_kept():
+    from src import screener
+    from src.config import load_config
+
+    failed = screener.StageResult(False, ["delivery on down days is running at 0.96x"])
+    stage = screener.apply_delivery_gate(failed, load_config())
+    assert stage.passed
+    assert "not required: delivery on down days is running at 0.96x" in stage.notes
+
+
+def test_with_the_gate_on_a_failure_still_drops_the_candidate():
+    from src import screener
+
+    class On:
+        def get(self, key, default=None):
+            return True if key == "delivery.gate" else default
+
+    failed = screener.StageResult(False, ["too little delivery"])
+    assert screener.apply_delivery_gate(failed, On()).passed is False

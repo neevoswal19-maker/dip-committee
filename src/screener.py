@@ -71,6 +71,20 @@ class ScreenResult:
         return "passed" if self.passed_all else "not evaluated"
 
 
+def delivery_gates(cfg: Any) -> bool:
+    """Whether failing the delivery stage drops a candidate (config delivery.gate)."""
+    return bool(cfg.get("delivery.gate", True))
+
+
+def apply_delivery_gate(stage: StageResult, cfg: Any) -> StageResult:
+    """With the gate off, a failed delivery stage passes with the reasons kept
+    as a note: still measured, shown and part of the ranking, but no longer a
+    reason to drop a candidate."""
+    if delivery_gates(cfg) or stage.passed:
+        return stage
+    return StageResult(True, [], list(stage.notes) + [f"not required: {'; '.join(stage.reasons)}"])
+
+
 # --- Stage 2: dip detection -------------------------------------------------
 
 
@@ -440,6 +454,7 @@ def screen_stock(
         delivery = nse.get_delivery_history(stock, days=int(cfg.get("delivery.avg_window_days", 20)) * 3)
         result.delivery, delivery_metrics = evaluate_delivery(delivery.value, cfg)
         result.metrics.update(delivery_metrics)
+        result.delivery = apply_delivery_gate(result.delivery, cfg)
 
         if result.passed_all:
             result.score = score_candidate(result.metrics, cfg)

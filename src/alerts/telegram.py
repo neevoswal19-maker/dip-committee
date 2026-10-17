@@ -348,7 +348,8 @@ def scan_summary(
     lines = [
         title,
         f"{summary.universe_size} scanned, {summary.passed_dip} passed the dip screen, "
-        f"{summary.passed_delivery} confirmed on delivery",
+        + (f"{summary.passed_delivery} confirmed on delivery" if cfg.get("delivery.gate", True)
+           else f"{summary.passed_delivery} passed the quality checks"),
     ]
     if market and market.get("label"):
         lines.append(_regime_line(market))

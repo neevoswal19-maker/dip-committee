@@ -22,7 +22,7 @@ def _market_regime() -> dict:
 st.markdown("# Dip Committee")
 st.caption(
     f"Buy-the-dip research for the {cfg.get('universe.index')} - "
-    f"delivery-confirmed and trend-filtered by the screen, then judged by the committee."
+    f"quality- and trend-filtered by the screen, then judged by the committee."
 )
 
 theme.disclaimer()
@@ -49,7 +49,7 @@ else:
     cols[0].metric("Candidates", len(candidates))
     cols[1].metric("Universe", latest["universe_size"] or 0)
     cols[2].metric("Dip screen", latest["passed_dip"] or 0)
-    cols[3].metric("Delivery", latest["passed_delivery"] or 0)
+    cols[3].metric("Passed screen", latest["passed_delivery"] or 0)
     cols[4].metric("Last scan", freshness)
 
     market = _market_regime()

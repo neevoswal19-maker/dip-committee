@@ -390,6 +390,16 @@ def size_position(
         target = decision.atr_value
         decision.binding_constraint = "ATR volatility overlay"
 
+    # Fixed mode (decided 2026-10-17): every buy is the same share of capital,
+    # as in the backtest that measured the strategy (8% x 15 positions,
+    # reports/option1_research.md). Kelly and the ATR overlay above are still
+    # computed and shown, but do not set the size.
+    fixed = str(cfg.get("sizing.mode", "kelly")).lower() == "fixed_pct"
+    fixed_pct = float(cfg.get("sizing.fixed_position_pct", 8.0))
+    if fixed:
+        target = portfolio.capital * fixed_pct / 100.0
+        decision.binding_constraint = f"fixed {fixed_pct:g}% position"
+
     # --- Step 5: portfolio constraints
     constraints = cfg.get("sizing.constraints", {}) or {}
 
@@ -399,12 +409,13 @@ def size_position(
         decision.narrative = f"NO BUY. The book is full at {max_positions} positions; close something before adding."
         return decision
 
-    stock_cap = portfolio.capital * float(spec.get("max_portfolio_pct", 12.0)) / 100.0
+    cap_pct = fixed_pct if fixed else float(spec.get("max_portfolio_pct", 12.0))
+    stock_cap = portfolio.capital * cap_pct / 100.0
     existing = portfolio.holdings.get(symbol, 0.0)
     headroom = max(0.0, stock_cap - existing)
     if target > headroom:
         target = headroom
-        decision.binding_constraint = f"per-stock cap of {spec.get('max_portfolio_pct')}%"
+        decision.binding_constraint = f"per-stock cap of {cap_pct:g}%"
         if existing > 0:
             decision.adjustments.append(f"already holding Rs {existing:,.0f} of {symbol}, so only the remainder is available")
 
@@ -421,7 +432,9 @@ def size_position(
 
     max_heat = float(constraints.get("max_portfolio_heat_pct", 6.0))
     heat_headroom_pct = max(0.0, max_heat - portfolio.heat_pct)
-    if risk_pct > heat_headroom_pct:
+    # In fixed mode the 15-position limit bounds total risk instead: 15 x 8%
+    # at a 25% stop is 30% of capital if every stop were hit at once.
+    if not fixed and risk_pct > heat_headroom_pct:
         if heat_headroom_pct <= 0:
             decision.rejections.append(
                 f"portfolio heat is already {portfolio.heat_pct:.1f}% against a {max_heat:.0f}% ceiling"

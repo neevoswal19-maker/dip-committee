@@ -65,6 +65,11 @@ dip:
 # holders are absorbing the selling rather than traders churning intraday.
 # -----------------------------------------------------------------------------
 delivery:
+  # Off since 2026-10-17. The first backtest of this stage with real NSE data
+  # (reports/option1_research.md, 2020-2026) found it removed ~70% of signals
+  # and the rest did slightly worse: 14.3%/yr since 2022 with it, 16.5%
+  # without. It is still measured, shown and used in the ranking.
+  gate: false
   avg_window_days: 20
   # Calibrated against the measured distribution across 60 Nifty 500 stocks,
   # not chosen by intuition. The 10-session mean down-day delivery ratio runs:
@@ -161,6 +166,13 @@ regime:
 # -----------------------------------------------------------------------------
 sizing:
   default_capital: 500000.0
+  # How a BUY is sized (decided 2026-10-17). fixed_pct: every buy is
+  # fixed_position_pct of capital, bought whole at the signal, at most 15
+  # positions - what the backtest measured (2020+: 15-18%/yr against 9.9% for
+  # the Nifty 50, worst fall -33.9% in 2020-21). kelly: the conviction bands
+  # below, which at conviction 50-59 gave 3% positions and ~4%/yr.
+  mode: fixed_pct
+  fixed_position_pct: 8.0
 
   min_trades_for_live_estimate: 20
   # Measured from the 2017-2023 backtest (114 trades, a window that includes
@@ -246,7 +258,7 @@ sizing:
     min_position_value: 5000.0       # below this, brokerage eats the edge
 
   staged_entry:
-    enabled: true
+    enabled: false                   # the backtest bought the whole position at once
     tranches:
       - {pct: 50, trigger: "signal"}
       - {pct: 25, trigger: "drop_pct", value: 7.0}

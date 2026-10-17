@@ -29,7 +29,14 @@ def cfg():
     # Most tests here exercise the ATR overlay - volatile stocks sized
     # smaller - which is what `stop_rule: atr` does. The -25% stop now in
     # config.yaml is covered by TestPercentStop below.
-    return _Override(load_config(), **{"sizing.stop_rule": "atr"})
+    # Kelly mode with staged entry: the engine these tests cover. The live
+    # config uses fixed 8% positions, covered by TestFixedPosition below.
+    return _kelly(load_config(), **{"sizing.stop_rule": "atr"})
+
+
+def _kelly(base, **extra):
+    staged = dict(base.get("sizing.staged_entry", {}) or {}, enabled=True)
+    return _Override(base, **{"sizing.mode": "kelly", "sizing.staged_entry": staged, **extra})
 
 
 @pytest.fixture
@@ -345,7 +352,7 @@ class TestPercentStop:
 
     @pytest.fixture
     def pct_cfg(self):
-        return load_config()
+        return _kelly(load_config())
 
     def test_config_uses_the_researched_stop(self, pct_cfg):
         assert pct_cfg.get("sizing.stop_rule") == "pct"
@@ -375,3 +382,55 @@ class TestPercentStop:
             symbol="X", conviction=70.0, price=100.0, atr=0.0, cfg=pct_cfg, portfolio=portfolio
         )
         assert decision.stop_price == pytest.approx(75.0)
+
+
+class TestFixedPosition:
+    """The live mode since 2026-10-17: every buy is 8% of capital, bought whole."""
+
+    @pytest.fixture
+    def live(self):
+        return load_config()
+
+    def _buy(self, live, portfolio, **kw):
+        args = dict(symbol="X", conviction=55.0, price=100.0, atr=2.0, cfg=live, portfolio=portfolio)
+        args.update(kw)
+        return sz.size_position(**args)
+
+    def test_config_is_fixed_eight_percent(self, live):
+        assert live.get("sizing.mode") == "fixed_pct"
+        assert live.get("sizing.fixed_position_pct") == 8.0
+
+    def test_every_buy_is_eight_percent_whatever_the_conviction(self, live, portfolio):
+        for conviction in (52.0, 65.0, 85.0):
+            d = self._buy(live, portfolio, conviction=conviction)
+            assert d.is_buy
+            assert d.total_value == pytest.approx(80_000.0)
+            assert "fixed 8% position" in d.binding_constraint
+
+    def test_stop_and_risk_follow_the_25_percent_stop(self, live, portfolio):
+        d = self._buy(live, portfolio)
+        assert d.stop_price == pytest.approx(75.0)
+        assert d.risk_pct_of_capital == pytest.approx(2.0)
+
+    def test_bought_whole_at_the_signal(self, live, portfolio):
+        d = self._buy(live, portfolio)
+        assert len(d.tranches) == 1 and d.tranches[0].shares == d.total_shares
+
+    def test_the_heat_ceiling_does_not_block_it(self, live):
+        busy = sz.PortfolioState(capital=1_000_000.0, open_positions=10, open_risk=200_000.0)
+        assert self._buy(live, busy).is_buy
+
+    def test_the_fifteen_position_limit_still_does(self, live):
+        full = sz.PortfolioState(capital=1_000_000.0, open_positions=15)
+        assert not self._buy(live, full).is_buy
+
+    def test_sector_and_cash_limits_still_apply(self, live):
+        crowded = sz.PortfolioState(capital=1_000_000.0, sector_exposure={"Banks": 220_000.0})
+        d = self._buy(live, crowded, sector="Banks")
+        assert d.total_value <= 30_000.0 + 100
+        poor = sz.PortfolioState(capital=1_000_000.0, holdings={"A": 960_000.0})
+        assert self._buy(live, poor).total_value <= 40_000.0
+
+    def test_a_veto_or_low_conviction_is_still_no_buy(self, live, portfolio):
+        assert not self._buy(live, portfolio, forensics_veto=True).is_buy
+        assert not self._buy(live, portfolio, conviction=40.0).is_buy
