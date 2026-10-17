@@ -415,7 +415,7 @@ def size_position(
     headroom = max(0.0, stock_cap - existing)
     if target > headroom:
         target = headroom
-        decision.binding_constraint = f"per-stock cap of {cap_pct:g}%"
+        decision.binding_constraint = f"per-stock cap of {cap_pct}%"
         if existing > 0:
             decision.adjustments.append(f"already holding Rs {existing:,.0f} of {symbol}, so only the remainder is available")
 
