@@ -159,3 +159,38 @@ def test_etf_costs_charge_no_stt_on_buys_and_a_sliver_on_sells():
     assert cost("BUY", 1000, 100.0) == pytest.approx(buy_share.total - buy_share.stt)
     sell_share = charges.estimate("SELL", 1000, 100.0, cfg=CFG)
     assert cost("SELL", 1000, 100.0) == pytest.approx(sell_share.total - sell_share.stt + 1.0)
+
+
+# --- Data repair ----------------------------------------------------------------------
+
+
+def test_an_unadjusted_split_is_rescaled_out_of_earlier_prices():
+    index = pd.bdate_range("2019-01-01", periods=6)
+    close = pd.Series([3000.0, 3030.0, 3060.0, 30.9, 31.2, 31.5], index=index)     # a 1:100 split
+    frame = pd.DataFrame({"open": close, "high": close, "low": close, "close": close,
+                          "volume": 10.0}, index=index)
+    fixed = es.repair_splits(frame)
+    assert fixed["close"].iloc[2] == pytest.approx(3060.0 * 30.9 / 3060.0)
+    assert (fixed["close"].pct_change().dropna().abs() < 0.05).all()
+    assert fixed["volume"].iloc[0] == pytest.approx(10.0 * 3060.0 / 30.9)
+
+
+def test_an_ordinary_bad_day_is_left_alone():
+    index = pd.bdate_range("2020-03-01", periods=3)
+    close = pd.Series([100.0, 70.0, 72.0], index=index)                              # a 30% crash
+    frame = pd.DataFrame({"open": close, "high": close, "low": close, "close": close}, index=index)
+    assert es.repair_splits(frame)["close"].tolist() == [100.0, 70.0, 72.0]
+
+
+def test_the_composite_chains_returns_so_a_late_listing_does_not_jump():
+    index = pd.bdate_range("2021-01-01", periods=4)
+
+    def member(closes, idx=index):
+        c = pd.Series(closes, index=idx)
+        return pd.DataFrame({"open": c, "high": c * 1.01, "low": c * 0.99, "close": c})
+
+    late = member([500.0, 510.0], index[2:])
+    comp = es.composite({"a": member([100, 110, 121, 121.0]), "b": member([50, 55, 60.5, 60.5]), "c": late})
+    assert comp["close"].iloc[1] == pytest.approx(110.0)                            # both +10%
+    assert comp["close"].iloc[3] == pytest.approx(121.0 * (1 + (0 + 0 + 0.02) / 3))  # c joins with +2%
+    assert (comp["high"] > comp["close"]).all()

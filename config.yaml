@@ -431,8 +431,10 @@ etf_swing:
   max_position_value: 140000
   max_positions: 3
   metals:                            # name: [ETF, long-history stand-in]
-    gold: [GOLDBEES.NS, GOLDBEES.NS]
-    silver: [SILVERBEES.NS, "SI=F*USDINR"]   # SILVERBEES lists in 2022
+    gold: [GOLDBEES.NS, "GC=F*USDINR"]     # GOLDBEES split in 2019 unadjusted
+    silver: [SILVERBEES.NS, "SI=F*USDINR"]  # SILVERBEES lists in 2022
+  # Stand-in: the NSE index, or an equal-weight index of the breadth
+  # members when Yahoo has no history for it.
   sectors:                           # name: [ETF, index stand-in, regime-gated]
     it: [ITBEES.NS, "^CNXIT", true]
     metal: [METALIETF.NS, "^CNXMETAL", true]

@@ -59,21 +59,38 @@ def pct(x) -> str:
     return "-" if x is None else f"{x:.0%}"
 
 
-def history(symbol: str) -> pd.DataFrame | None:
-    if symbol == "SI=F*USDINR":
-        silver = history("SI=F")
-        rupee = history("USDINR=X")
-        if silver is None or rupee is None:
-            return None
-        rate = rupee["close"].reindex(silver.index).ffill()
-        out = silver[["open", "high", "low", "close"]].mul(rate, axis=0).dropna()
-        out["volume"] = float("nan")
-        return out
-    frame = prices.get_index_history(symbol, years=YEARS).value
-    if frame is None or frame.empty:
-        log.warning("No history for %s", symbol)
+#: Sector index symbols Yahoo has used; the first with data wins.
+INDEX_ALIASES = {
+    "^CNXMETAL": ["^CNXMETAL", "NIFTY_METAL.NS", "^NIFTYMETAL"],
+    "^CNXAUTO": ["^CNXAUTO", "NIFTY_AUTO.NS", "^NIFTYAUTO"],
+    "^CNXPSUBANK": ["^CNXPSUBANK", "NIFTY_PSU_BANK.NS", "^NIFTYPSUBANK"],
+}
+
+
+def in_rupees(symbol: str) -> pd.DataFrame | None:
+    """A dollar commodity future valued in rupees each day; no volume."""
+    metal = history(symbol)
+    rupee = history("USDINR=X")
+    if metal is None or rupee is None:
         return None
-    return swing.adjust_for_dividends(frame)
+    rate = rupee["close"].reindex(metal.index).ffill()
+    out = metal[["open", "high", "low", "close"]].mul(rate, axis=0).dropna()
+    out["volume"] = float("nan")
+    return out
+
+
+def history(symbol: str, members: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame | None:
+    if symbol.endswith("*USDINR"):
+        return in_rupees(symbol.split("*")[0])
+    for candidate in INDEX_ALIASES.get(symbol, [symbol]):
+        frame = prices.get_index_history(candidate, years=YEARS).value
+        if frame is not None and not frame.empty:
+            return swing.adjust_for_dividends(es.repair_splits(frame))
+    if members:
+        log.info("No Yahoo history for %s; using an equal-weight index of %d members", symbol, len(members))
+        return es.composite(members)
+    log.warning("No history for %s", symbol)
+    return None
 
 
 def build(assets: dict[str, tuple[str, str, bool]], nifty_close: pd.Series, constituents: dict,
@@ -82,7 +99,7 @@ def build(assets: dict[str, tuple[str, str, bool]], nifty_close: pd.Series, cons
     regime = es.above_sma50(nifty_close)
     out = {}
     for name, (symbol, kind, gated) in assets.items():
-        frame = history(symbol)
+        frame = history(symbol, constituents.get(name) if kind == "sector" else None)
         if frame is None or len(frame) < 120:
             continue
         if not use_volume:
