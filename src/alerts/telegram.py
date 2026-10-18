@@ -481,7 +481,6 @@ INTRADAY_LABEL = "INTRADAY"
 _EXIT_REASONS = {
     "stop": "stop-loss hit",
     "breakeven": "the rest stopped out at entry after the partial",
-    "target_3R": "3R target reached",
     "trail_ema20": "a 5-minute close back through the 20 EMA",
     "time_stop_15:10": "square-off at 15:10",
 }
@@ -510,10 +509,12 @@ def intraday_event(event: Any, mode: str, tracks: str | None = None) -> str | No
             f"<b>{label} {'BUY' if long else 'SHORT'}: {symbol}</b>" + (f" ({_escape(tracks)})" if tracks else ""),
             f"Entry about Rs {event.price:,.2f} (5-minute close at {at})",
             f"Stop Rs {d['stop']:,.2f}",
-            f"1.5R Rs {d['target_1_5R']:,.2f}: {'sell' if long else 'buy back'} half, move the stop to entry",
-            f"3R Rs {d['target_3R']:,.2f}: exit the rest",
+            f"{d['partial_r']:g}R Rs {d['target_partial']:,.2f}: {'sell' if long else 'buy back'} half, "
+            f"move the stop to entry",
             f"Size {d['units']:,} units = Rs {d['exposure']:,} exposure, Rs {d['margin']:,} margin (MIS), "
             f"Rs {d['risk_rs']:,} at risk",
+            (f"{d['final_r']:g}R Rs {d['target_final']:,.2f}: exit the rest" if d.get("target_final")
+             else "No fixed final target: the rest only trails"),
             "Otherwise the rest exits on a 5-minute close back through the 20 EMA, or at 15:10.",
         ]
         if mode == "paper":
@@ -521,10 +522,12 @@ def intraday_event(event: Any, mode: str, tracks: str | None = None) -> str | No
         return "\n".join(lines)
     if event.kind == "partial":
         return (f"<b>{label} PARTIAL: {symbol}</b>\n"
-                f"Half ({d.get('units', 0):,} units) at Rs {event.price:,.2f}, 1.5R. "
+                f"Half ({d.get('units', 0):,} units) at Rs {event.price:,.2f}, the first target. "
                 f"Stop on the rest moves to entry, Rs {d.get('new_stop', 0):,.2f}.")
     if event.kind == "exit":
-        reason = _EXIT_REASONS.get(d.get("reason"), d.get("reason", "exit"))
+        code = str(d.get("reason", "exit"))
+        reason = (f"{code.split('_')[1]} target reached" if code.startswith("target_")
+                  else _EXIT_REASONS.get(code, code))
         return (f"<b>{label} EXIT: {symbol}</b>\n"
                 f"{d.get('units', 0):,} units at Rs {event.price:,.2f} ({at}): {_escape(reason)}.")
     return None

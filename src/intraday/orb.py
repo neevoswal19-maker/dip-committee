@@ -15,8 +15,8 @@ As specified by the owner on 2026-10-17 and fixed before any test:
    closes the trade's way and back beyond both lines. Otherwise it expires
    and a new breakout may arm, until one trade has been taken that day.
 4. Stop: beyond the pullback's extreme or 0.10% beyond VWAP, whichever is
-   further. At 1.5R half is sold and the stop moves to entry. The rest leaves
-   on a 5-minute close back through the 20 EMA (at that close), at 3R, or at
+   further. At 1.5R half is sold and the stop moves to entry (intraday.partial_r). The rest leaves
+   on a 5-minute close back through the 20 EMA (at that close), at 3R (intraday.final_r), or at
    15:10 (the close of the 15:05 bar).
 
 Every decision reads only completed bars, so the live job, which calls this on
@@ -143,6 +143,9 @@ def session_events(f: pd.DataFrame, day: date, symbol: str, params: dict[str, An
     risk_rs = float(params["risk_per_trade"])
     max_exposure = float(params["max_exposure"])
     slip = float(params.get("slippage_pct", 0.02)) / 100.0
+    partial_r = float(params.get("partial_r", 1.5))
+    final_r = params.get("final_r", 3.0)
+    final_r = float(final_r) if final_r else None     # None: the runner only trails
 
     for n, row in enumerate(rows):
         start = row.Index
@@ -158,7 +161,7 @@ def session_events(f: pd.DataFrame, day: date, symbol: str, params: dict[str, An
             long = trade.side == "LONG"
             sign = 1 if long else -1
             r = trade.risk_per_unit
-            partial_done = any(reason == "partial_1.5R" for _, reason, _, _ in trade.fills)
+            partial_done = any(reason.startswith("partial_") for _, reason, _, _ in trade.fills)
             stop_level = trade.entry if partial_done else trade.stop
             hit_stop = row.low <= stop_level if long else row.high >= stop_level
             if hit_stop:
@@ -166,17 +169,17 @@ def session_events(f: pd.DataFrame, day: date, symbol: str, params: dict[str, An
                 reason = "breakeven" if partial_done else "stop"
                 _exit(trade, events, closed_at, reason, trade.open_units, fill * (1 - sign * slip))
                 continue
-            target1 = trade.entry + sign * 1.5 * r
-            target3 = trade.entry + sign * 3.0 * r
+            target1 = trade.entry + sign * partial_r * r
+            target3 = trade.entry + sign * final_r * r if final_r else None
             if not partial_done and (row.high >= target1 if long else row.low <= target1):
                 half = trade.units // 2
                 if half >= 1:
-                    trade.fills.append((closed_at, "partial_1.5R", half, target1))
+                    trade.fills.append((closed_at, f"partial_{partial_r:g}R", half, target1))
                     events.append(Event(closed_at, symbol, "partial", trade.side, round(target1, 2),
                                         {"units": half, "new_stop": round(trade.entry, 2)}))
                 partial_done = True
-            if partial_done and (row.high >= target3 if long else row.low <= target3):
-                _exit(trade, events, closed_at, "target_3R", trade.open_units, target3)
+            if partial_done and target3 is not None and (row.high >= target3 if long else row.low <= target3):
+                _exit(trade, events, closed_at, f"target_{final_r:g}R", trade.open_units, target3)
                 continue
             if partial_done and (row.close < ema if long else row.close > ema):
                 _exit(trade, events, closed_at, "trail_ema20", trade.open_units, row.close * (1 - sign * slip))
@@ -216,8 +219,10 @@ def session_events(f: pd.DataFrame, day: date, symbol: str, params: dict[str, An
                     trade = DayTrade(day, symbol, armed["side"], closed_at, entry, stop, risk, units)
                     sign = 1 if long else -1
                     events.append(Event(closed_at, symbol, "entry", armed["side"], round(entry, 2), {
-                        "stop": round(stop, 2), "target_1_5R": round(entry + sign * 1.5 * risk, 2),
-                        "target_3R": round(entry + sign * 3.0 * risk, 2), "units": units,
+                        "stop": round(stop, 2), "partial_r": partial_r, "final_r": final_r,
+                        "target_partial": round(entry + sign * partial_r * risk, 2),
+                        "target_final": round(entry + sign * final_r * risk, 2) if final_r else None,
+                        "units": units,
                         "exposure": round(units * entry), "margin": round(units * entry / float(params["leverage"])),
                         "risk_rs": round(units * risk), "rsi": round(rsi, 1),
                     }))
@@ -347,10 +352,13 @@ def params_for(symbol: str, cfg: Any) -> dict[str, Any]:
         "max_exposure": margin * leverage,
         "leverage": leverage,
         "slippage_pct": float(ic.get("slippage_pct", 0.02)),
+        "partial_r": float(ic.get("partial_r", 1.5)),
+        "final_r": ic.get("final_r", 3.0),
     }
 
 
-def backtest(bars_by_symbol: dict[str, pd.DataFrame], cfg: Any) -> tuple[list[dict[str, Any]], list[Event]]:
+def backtest(bars_by_symbol: dict[str, pd.DataFrame], cfg: Any,
+             overrides: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[Event]]:
     """Every session after the first (which only warms the indicators up)."""
     costs = (cfg.get("intraday", {}) or {}).get("costs", {}) or {}
     results, all_events = [], []
@@ -360,7 +368,7 @@ def backtest(bars_by_symbol: dict[str, pd.DataFrame], cfg: Any) -> tuple[list[di
         f = with_indicators(bars)
         days = sorted({ts.date() for ts in f.index})
         for day in days[1:]:
-            events, trade = session_events(f, day, symbol, params_for(symbol, cfg))
+            events, trade = session_events(f, day, symbol, {**params_for(symbol, cfg), **(overrides or {})})
             all_events += events
             if trade is not None:
                 results.append(result(trade, costs))

@@ -76,7 +76,7 @@ def test_the_textbook_long_arms_enters_takes_half_and_exits_at_3R():
     armed, entry, partial, exit_ = events
     assert armed.when == pd.Timestamp(f"{DAY2} 09:35") and armed.side == "LONG"
     assert entry.when == pd.Timestamp(f"{DAY2} 09:45")             # the 9:40 candle's close
-    assert entry.detail["stop"] < entry.price < entry.detail["target_1_5R"] < entry.detail["target_3R"]
+    assert entry.detail["stop"] < entry.price < entry.detail["target_partial"] < entry.detail["target_final"]
     assert partial.detail["units"] == trade.units // 2
     assert partial.detail["new_stop"] == pytest.approx(trade.entry, abs=0.01)
     assert exit_.detail["reason"] == "target_3R" and trade.closed
@@ -87,7 +87,7 @@ def test_the_mirror_image_is_a_short():
     assert kinds(events) == ["armed", "entry", "partial", "exit"]
     assert {e.side for e in events} == {"SHORT"}
     entry = events[1]
-    assert entry.detail["stop"] > entry.price > entry.detail["target_1_5R"] > entry.detail["target_3R"]
+    assert entry.detail["stop"] > entry.price > entry.detail["target_partial"] > entry.detail["target_final"]
     assert trade.exit_reason == "target_3R"
 
 
@@ -234,7 +234,7 @@ def test_the_entry_message_carries_the_label_levels_and_size():
     events, _ = run(textbook())
     body = telegram.intraday_event(events[1], "paper", "Nifty 50")
     assert body.startswith("<b>INTRADAY · PAPER BUY: NIFTYBEES</b> (Nifty 50)")
-    for part in ("Stop Rs", "1.5R Rs", "3R Rs", "units", "margin (MIS)", "15:10", "Paper trade"):
+    for part in ("Stop Rs", "R Rs", "exit the rest", "units", "margin (MIS)", "15:10", "Paper trade"):
         assert part in body
     live = telegram.intraday_event(events[1], "live")
     assert live.startswith("<b>INTRADAY BUY: NIFTYBEES</b>") and "Paper trade" not in live
@@ -284,3 +284,20 @@ def test_a_saved_trade_is_updated_not_duplicated(tmp_path, monkeypatch):
     with db.connection() as conn:
         rows = conn.execute(select(db.intraday_trades)).fetchall()
     assert len(rows) == 1 and rows[0].exit_reason == "target_3R" and rows[0].closed
+
+
+def test_the_targets_are_settings():
+    from src.alerts import telegram
+
+    params = {**PARAMS, "partial_r": 1.0, "final_r": None}
+    events, trade = run(textbook(), params)
+    entry, partial = events[1], events[2]
+    assert entry.detail["target_partial"] == pytest.approx(trade.entry + trade.risk_per_unit, abs=0.01)
+    assert entry.detail["target_final"] is None
+    assert partial.price == pytest.approx(trade.entry + trade.risk_per_unit, abs=0.01)
+    assert trade.exit_reason == "time_stop_15:10"            # no final target: the rest only trails
+    assert "No fixed final target" in telegram.intraday_event(entry, "paper")
+
+    events, trade = run(textbook(), {**PARAMS, "partial_r": 1.5, "final_r": 2.5})
+    assert trade.exit_reason == "target_2.5R"
+    assert "2.5 target reached" in telegram.intraday_event(events[-1], "paper")

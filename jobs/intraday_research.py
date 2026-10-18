@@ -80,13 +80,16 @@ def main() -> int:
     verdict, why = orb.judge(paper_card)
     log.info("Backtest: %s", card)
 
+    grid, choice, choice_reason = ratio_grid(bars, cfg, capital)
+
     pd.DataFrame(results).to_csv(REPORTS / "intraday_trades.csv", index=False)
     payload = {"generated": date.today().isoformat(), "sessions": sessions, "backtest": card,
                "by_symbol": by_symbol, "by_side": by_side, "events": kinds, "paper": paper_card,
-               "paper_verdict": verdict, "paper_reasons": why, "criteria": orb.PASS}
+               "paper_verdict": verdict, "paper_reasons": why, "criteria": orb.PASS,
+               "ratio_grid": grid, "ratio_choice": choice, "ratio_reason": choice_reason}
     (REPORTS / "intraday_research.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     write_report(results, card, by_symbol, by_side, kinds, sessions, paper_card, verdict, why,
-                 time.time() - started)
+                 time.time() - started, grid, choice, choice_reason)
 
     print("\n=== SUMMARY ===")
     print(f"Sessions: {sessions}")
@@ -97,7 +100,52 @@ def main() -> int:
               f"net Rs {num(s.get('net'), 0)}")
     print(f"Events: {kinds}")
     print(f"Paper: {paper_card.get('trades', 0)} trades; verdict {verdict} {why}")
+    print("Ratio grid (partial R / final R): trades, net first half, net second half, total, PF")
+    for g in grid:
+        print(f"  {g['label']:<14} {g['trades']:>3}  {g['net_first']:>9,.0f}  {g['net_second']:>9,.0f}  "
+              f"{g['net']:>9,.0f}  {num(g['profit_factor'])}")
+    print(f"Ratio choice: {choice} - {choice_reason}")
     return 0
+
+
+#: Fixed before running: (half sold at, rest out at), None = trail only.
+GRID = [(p, f) for p in (1.0, 1.5, 2.0) for f in (2.0, 2.5, 3.0, None) if f is None or f > p]
+CURRENT = (1.5, 3.0)
+
+
+def ratio_grid(bars, cfg, capital):
+    """Every target pair, split into the first and second half of the sessions.
+
+    Rule, fixed before running: move off the document's 1.5R / 3R only for a
+    pair that made more net profit than it in BOTH halves. With ~20 trades,
+    anything less is noise.
+    """
+    days = sorted({ts.date() for f in bars.values() for ts in f.index})[1:]
+    mid = days[len(days) // 2] if days else None
+    rows = []
+    for partial, final in GRID:
+        results, _ = orb.backtest(bars, cfg, {"partial_r": partial, "final_r": final})
+        first = [r for r in results if r["day"] < mid.isoformat()]
+        second = [r for r in results if r["day"] >= mid.isoformat()]
+        card = orb.scorecard(results, capital)
+        rows.append({
+            "partial_r": partial, "final_r": final,
+            "label": f"{partial:g}R / {final:g}R" if final else f"{partial:g}R / trail",
+            "trades": card.get("trades", 0), "net": card.get("net", 0.0),
+            "profit_factor": card.get("profit_factor"), "win_rate": card.get("win_rate"),
+            "net_first": orb.scorecard(first, capital).get("net", 0.0),
+            "net_second": orb.scorecard(second, capital).get("net", 0.0),
+        })
+    base = next(r for r in rows if (r["partial_r"], r["final_r"]) == CURRENT)
+    better = [r for r in rows if r is not base
+              and r["net_first"] > base["net_first"] and r["net_second"] > base["net_second"]]
+    if not better:
+        return rows, base["label"], ("No pair beat 1.5R / 3R in both halves of the sessions, so the "
+                                     "document's ratios stay.")
+    best = max(better, key=lambda r: r["net"])
+    return rows, best["label"], (f"{best['label']} made more than 1.5R / 3R in both halves "
+                                 f"(Rs {best['net_first']:,.0f} and Rs {best['net_second']:,.0f} against "
+                                 f"Rs {base['net_first']:,.0f} and Rs {base['net_second']:,.0f}).")
 
 
 def _row(label: str, s: dict) -> str:
@@ -107,7 +155,8 @@ def _row(label: str, s: dict) -> str:
             f"Rs {num(s['net'], 0)} | {num(s['max_drawdown_pct'], 1)}% |")
 
 
-def write_report(results, card, by_symbol, by_side, kinds, sessions, paper_card, verdict, why, seconds):
+def write_report(results, card, by_symbol, by_side, kinds, sessions, paper_card, verdict, why, seconds,
+                 grid=(), choice=None, choice_reason=""):
     header = ["| | Trades | Win rate | Avg R | Profit factor | Net after costs | Worst drawdown |",
               "|---|---|---|---|---|---|---|"]
     lines = [
@@ -142,6 +191,17 @@ def write_report(results, card, by_symbol, by_side, kinds, sessions, paper_card,
         + ("**pass**" if verdict else "**fail**" if verdict is False else "not judged yet")
         + (f" ({'; '.join(why)})." if why else "."),
     ]
+    if grid:
+        lines += ["", "## Target ratios", "",
+                  "Half the position is sold at the first figure and the rest at the second (or it only trails). "
+                  "Rule, fixed before running: change from 1.5R / 3R only for a pair that made more in both "
+                  "halves of the sessions.", "",
+                  "| Half at / rest at | Trades | Win rate | Profit factor | Net, first half | Net, second half | Net |",
+                  "|---|---|---|---|---|---|---|"]
+        for g in grid:
+            lines.append(f"| {g['label']} | {g['trades']} | {pct(g['win_rate'])} | {num(g['profit_factor'])} | "
+                         f"Rs {num(g['net_first'], 0)} | Rs {num(g['net_second'], 0)} | Rs {num(g['net'], 0)} |")
+        lines += ["", f"**Choice: {choice}.** {choice_reason}"]
     if results:
         lines += ["", "## Every backtest trade", "",
                   "| Day | ETF | Side | Entry | Stop | Units | Exit | Net | R |", "|---|---|---|---|---|---|---|---|---|"]
