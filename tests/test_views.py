@@ -60,3 +60,22 @@ def test_learning_page_shows_versions_and_proposals(fresh_db):
 def test_portfolio_page_renders_with_no_positions(fresh_db):
     at = _render("views/portfolio.py")
     assert not at.exception, [e.value for e in at.exception]
+
+
+def test_intraday_page_renders_on_an_empty_database(fresh_db):
+    at = _render("views/intraday.py")
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("0 of 40 trades so far" in i.value for i in at.info)
+
+
+def test_intraday_page_shows_paper_trades(fresh_db):
+    from datetime import date, datetime
+
+    with db.connection() as conn:
+        conn.execute(db.intraday_trades.insert().values(
+            day=date(2026, 10, 19), symbol="NIFTYBEES", mode="paper", side="LONG",
+            entry_at=datetime(2026, 10, 19, 9, 45), entry=290.5, stop=289.2, units=2580,
+            exit_reason="target_3R", gross=9000.0, charges=320.0, net=8680.0, r=2.6, closed=True))
+    at = _render("views/intraday.py")
+    assert not at.exception, [e.value for e in at.exception]
+    assert len(at.dataframe) == 1

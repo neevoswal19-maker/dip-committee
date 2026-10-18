@@ -73,9 +73,11 @@ def store(frames: dict[str, pd.DataFrame]) -> int:
                 .where(db.intraday_bars.c.ts >= frame.index.min().to_pydatetime()))}
             rows = [{"symbol": name, "ts": ts.to_pydatetime(), **{c: float(r[c]) for c in COLUMNS if c in r}}
                     for ts, r in frame.iterrows() if ts.to_pydatetime() not in existing]
-            if rows:
-                conn.execute(db.intraday_bars.insert(), rows)
-                written += len(rows)
+            # One multi-row INSERT per thousand bars: row-by-row inserts cost a
+            # round trip each to a database on another continent.
+            for start in range(0, len(rows), 1000):
+                conn.execute(db.intraday_bars.insert().values(rows[start:start + 1000]))
+            written += len(rows)
     return written
 
 

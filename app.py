@@ -86,6 +86,7 @@ navigation = st.navigation(
         st.Page("views/committee.py", title="Committee"),
         st.Page("views/portfolio.py", title="Portfolio"),
         st.Page("views/learning.py", title="Learning"),
+        st.Page("views/intraday.py", title="Intraday"),
         st.Page("views/backtest_page.py", title="Backtest"),
     ]
 )

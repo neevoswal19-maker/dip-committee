@@ -472,3 +472,81 @@ def failure(message: str, cfg: Any = None) -> str:
         "",
         "<i>No candidates were assessed today. This is a job failure, not a quiet market.</i>",
     ])
+
+
+# --- Intraday (a separate strategy: src/intraday) -----------------------------------
+
+INTRADAY_LABEL = "INTRADAY"
+
+_EXIT_REASONS = {
+    "stop": "stop-loss hit",
+    "breakeven": "the rest stopped out at entry after the partial",
+    "target_3R": "3R target reached",
+    "trail_ema20": "a 5-minute close back through the 20 EMA",
+    "time_stop_15:10": "square-off at 15:10",
+}
+
+
+def intraday_label(mode: str) -> str:
+    return f"{INTRADAY_LABEL} · PAPER" if mode == "paper" else INTRADAY_LABEL
+
+
+def intraday_event(event: Any, mode: str, tracks: str | None = None) -> str | None:
+    """One message for an intraday event; None for events not worth a ping."""
+    label = intraday_label(mode)
+    symbol = _escape(event.symbol)
+    d = event.detail or {}
+    at = f"{event.when:%H:%M}"
+    long = event.side == "LONG"
+    if event.kind == "armed":
+        return (f"<b>{label} SETUP: {symbol}</b>\n"
+                f"{'Upside' if long else 'Downside'} breakout at Rs {event.price:,.2f} ({at}), "
+                f"{d.get('volume_x_avg', 0):.1f}x average volume. Waiting up to 6 candles for a pullback "
+                f"to the 20 EMA / VWAP.")
+    if event.kind in ("cancelled", "expired"):
+        return f"<b>{label} SETUP OFF: {symbol}</b>\n{_escape(d.get('reason', event.kind))} ({at})."
+    if event.kind == "entry":
+        lines = [
+            f"<b>{label} {'BUY' if long else 'SHORT'}: {symbol}</b>" + (f" ({_escape(tracks)})" if tracks else ""),
+            f"Entry about Rs {event.price:,.2f} (5-minute close at {at})",
+            f"Stop Rs {d['stop']:,.2f}",
+            f"1.5R Rs {d['target_1_5R']:,.2f}: {'sell' if long else 'buy back'} half, move the stop to entry",
+            f"3R Rs {d['target_3R']:,.2f}: exit the rest",
+            f"Size {d['units']:,} units = Rs {d['exposure']:,} exposure, Rs {d['margin']:,} margin (MIS), "
+            f"Rs {d['risk_rs']:,} at risk",
+            "Otherwise the rest exits on a 5-minute close back through the 20 EMA, or at 15:10.",
+        ]
+        if mode == "paper":
+            lines.append("<i>Paper trade, logged for the 40-trade test. Not yet a call to trade.</i>")
+        return "\n".join(lines)
+    if event.kind == "partial":
+        return (f"<b>{label} PARTIAL: {symbol}</b>\n"
+                f"Half ({d.get('units', 0):,} units) at Rs {event.price:,.2f}, 1.5R. "
+                f"Stop on the rest moves to entry, Rs {d.get('new_stop', 0):,.2f}.")
+    if event.kind == "exit":
+        reason = _EXIT_REASONS.get(d.get("reason"), d.get("reason", "exit"))
+        return (f"<b>{label} EXIT: {symbol}</b>\n"
+                f"{d.get('units', 0):,} units at Rs {event.price:,.2f} ({at}): {_escape(reason)}.")
+    return None
+
+
+def intraday_day_summary(day: date, today: list[dict[str, Any]], card: dict[str, Any],
+                         verdict: bool | None, why: list[str], max_delay: float | None, mode: str) -> str:
+    """The 15:12 wrap-up: today's trades and the running test."""
+    lines = [f"<b>{intraday_label(mode)}: {day:%a %d %b} wrap-up</b>"]
+    if today:
+        for r in today:
+            outcome = f"Rs {r['net']:+,.0f} ({r['r']:+.2f}R)" if r.get("closed") else "still open"
+            lines.append(f"{_escape(r['symbol'])} {r['side'].lower()}: {outcome}, {_escape(r.get('exit_reason') or '')}")
+    else:
+        lines.append("No trades today.")
+    n = card.get("trades", 0)
+    if n:
+        lines += ["", f"Paper so far: {n} trades, {card['win_rate']:.0%} won, profit factor "
+                      f"{card['profit_factor']:.2f}, net Rs {card['net']:+,.0f}."]
+    status = ("passed the 40-trade test" if verdict else "failed the 40-trade test" if verdict is False
+              else "; ".join(why))
+    lines.append(f"Test: {_escape(status)}.")
+    if max_delay is not None:
+        lines.append(f"Data delay: bars arrived up to {max_delay:.1f} min after each candle closed.")
+    return "\n".join(lines)

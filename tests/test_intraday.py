@@ -223,3 +223,64 @@ def test_replies_to_intraday_messages_are_never_recorded_as_trades():
     reply = telegram_inbox.parse("NIFTYBEES 100", "INTRADAY · PAPER BUY: NIFTYBEES\nEntry 290.50")
     assert isinstance(reply, telegram_inbox.Problem)
     assert "paper" in reply.reply.lower()
+
+
+# --- Telegram and the live job ----------------------------------------------------------
+
+
+def test_the_entry_message_carries_the_label_levels_and_size():
+    from src.alerts import telegram
+
+    events, _ = run(textbook())
+    body = telegram.intraday_event(events[1], "paper", "Nifty 50")
+    assert body.startswith("<b>INTRADAY · PAPER BUY: NIFTYBEES</b> (Nifty 50)")
+    for part in ("Stop Rs", "1.5R Rs", "3R Rs", "units", "margin (MIS)", "15:10", "Paper trade"):
+        assert part in body
+    live = telegram.intraday_event(events[1], "live")
+    assert live.startswith("<b>INTRADAY BUY: NIFTYBEES</b>") and "Paper trade" not in live
+
+
+def test_skipped_days_are_not_announced():
+    from src.alerts import telegram
+
+    events, _ = run(textbook(rows={T(9, 15): (99.8, 99.9, 98.9, 99.7, 4000.0)}))
+    assert telegram.intraday_event(events[0], "paper") is None
+
+
+def test_the_live_job_wakes_20_seconds_after_each_candle():
+    from datetime import datetime
+
+    from jobs.intraday_live import next_wake
+
+    assert next_wake(datetime(2026, 10, 19, 9, 31, 5)) == datetime(2026, 10, 19, 9, 35, 20)
+    assert next_wake(datetime(2026, 10, 19, 9, 35, 0)) == datetime(2026, 10, 19, 9, 40, 20)
+
+
+def test_only_one_live_session_runs_a_day(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from jobs.intraday_live import claim_session
+    from src import db
+
+    monkeypatch.setattr(db, "_engine", create_engine(f"sqlite:///{tmp_path/'i.db'}"))
+    db.init_db()
+    assert claim_session(date(2026, 10, 19), "paper") is True
+    assert claim_session(date(2026, 10, 19), "paper") is False
+    assert claim_session(date(2026, 10, 20), "paper") is True
+
+
+def test_a_saved_trade_is_updated_not_duplicated(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, select
+
+    from jobs.intraday_live import save_trade
+    from src import db
+
+    monkeypatch.setattr(db, "_engine", create_engine(f"sqlite:///{tmp_path/'t.db'}"))
+    db.init_db()
+    _, trade = run(textbook())
+    costs = CFG.get("intraday.costs")
+    save_trade(trade, "paper", costs)
+    save_trade(trade, "paper", costs)
+    with db.connection() as conn:
+        rows = conn.execute(select(db.intraday_trades)).fetchall()
+    assert len(rows) == 1 and rows[0].exit_reason == "target_3R" and rows[0].closed
