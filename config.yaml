@@ -451,6 +451,14 @@ intraday:
   max_margin: 150000                 # usable intraday margin
   leverage: 5                        # MIS: exposure capped at 7.5 lakh
   slippage_pct: 0.02                 # on market fills
+  # Targets, chosen 2026-10-18 by a rule fixed before the test: move off the
+  # document's 1.5R / 3R only for a pair that made more in both halves of the
+  # 60 backtest sessions. 2R / 2.5R did (Rs -5,997 and 13,411 against -7,427
+  # and 10,070). The final target hardly mattered (2.5R, 3R and trail-only
+  # within Rs 5): selling half at 2R instead of 1.5R was the difference. On 21
+  # trades this is a lean, not proof; the paper trades decide.
+  partial_r: 2.0                     # sell half here, stop on the rest to entry
+  final_r: 2.5                       # the rest exits here (null: trail only)
   max_bar_delay_minutes: 2           # flag Yahoo bars arriving later than this
   costs:                             # Groww intraday, per order
     brokerage_pct: 0.1

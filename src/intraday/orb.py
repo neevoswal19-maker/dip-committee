@@ -15,8 +15,8 @@ As specified by the owner on 2026-10-17 and fixed before any test:
    closes the trade's way and back beyond both lines. Otherwise it expires
    and a new breakout may arm, until one trade has been taken that day.
 4. Stop: beyond the pullback's extreme or 0.10% beyond VWAP, whichever is
-   further. At 1.5R half is sold and the stop moves to entry (intraday.partial_r). The rest leaves
-   on a 5-minute close back through the 20 EMA (at that close), at 3R (intraday.final_r), or at
+   further. At intraday.partial_r (2R) half is sold and the stop moves to entry. The rest leaves
+   on a 5-minute close back through the 20 EMA (at that close), at intraday.final_r (2.5R), or at
    15:10 (the close of the 15:05 bar).
 
 Every decision reads only completed bars, so the live job, which calls this on

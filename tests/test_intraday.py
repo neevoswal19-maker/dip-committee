@@ -18,7 +18,8 @@ from src.intraday import orb
 
 CFG = load_config()
 DAY1, DAY2 = "2026-10-15", "2026-10-16"
-PARAMS = orb.params_for("NIFTYBEES", CFG)
+# The mechanics tests pin the targets; the live setting is checked on its own below.
+PARAMS = {**orb.params_for("NIFTYBEES", CFG), "partial_r": 1.5, "final_r": 3.0}
 
 
 def _times():
@@ -300,4 +301,10 @@ def test_the_targets_are_settings():
 
     events, trade = run(textbook(), {**PARAMS, "partial_r": 1.5, "final_r": 2.5})
     assert trade.exit_reason == "target_2.5R"
-    assert "2.5 target reached" in telegram.intraday_event(events[-1], "paper")
+    assert "2.5R target reached" in telegram.intraday_event(events[-1], "paper")
+
+
+def test_the_live_targets_are_2R_then_2_5R():
+    """Chosen on 2026-10-18 by the grid rule: beat 1.5R / 3R in both halves of 60 sessions."""
+    live = orb.params_for("NIFTYBEES", CFG)
+    assert (live["partial_r"], live["final_r"]) == (2.0, 2.5)
