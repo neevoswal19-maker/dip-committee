@@ -431,3 +431,32 @@ alerts:
 scan:
   committee_top_n: 5                 # top N candidates go to the full committee
   run_hour_ist: 19
+
+# -----------------------------------------------------------------------------
+# INTRADAY - ORB + VWAP/20-EMA pullback on NIFTYBEES and BANKBEES.
+# A separate strategy from the Nifty 500 dip committee (src/intraday). Rules
+# fixed in src/intraday/orb.py on 2026-10-18. It runs in PAPER mode: every
+# signal goes to Telegram labelled INTRADAY - PAPER and its outcome is logged.
+# After 40 paper trades it is judged (profit factor >= 1.3, positive average
+# trade after costs, worst drawdown no deeper than 10%): pass -> mode: live,
+# fail -> removed.
+# -----------------------------------------------------------------------------
+intraday:
+  mode: paper                        # paper | live
+  symbols:                           # ETFs: the indices carry no volume for VWAP
+    NIFTYBEES: {max_range_pct: 0.85, tracks: "Nifty 50"}
+    BANKBEES: {max_range_pct: 1.10, tracks: "Nifty Bank"}
+  capital: 500000
+  risk_per_trade: 5000               # 1% at the stop
+  max_margin: 150000                 # usable intraday margin
+  leverage: 5                        # MIS: exposure capped at 7.5 lakh
+  slippage_pct: 0.02                 # on market fills
+  max_bar_delay_minutes: 2           # flag Yahoo bars arriving later than this
+  costs:                             # Groww intraday, per order
+    brokerage_pct: 0.1
+    brokerage_max: 20.0
+    exchange_pct: 0.00297
+    sebi_pct: 0.0001
+    gst_pct: 18.0
+    stt_sell_pct: 0.025
+    stamp_buy_pct: 0.003

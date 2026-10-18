@@ -482,6 +482,38 @@ telegram_inbox = Table(
 )
 
 
+# --- Intraday (a separate strategy: src/intraday) ----------------------------
+
+# 5-minute bars for NIFTYBEES and BANKBEES, kept so the history grows past the
+# 60 sessions Yahoo serves and the intraday rules can be backtested further.
+intraday_bars = Table(
+    "intraday_bars", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("symbol", String(32), nullable=False),
+    Column("ts", DateTime, nullable=False),          # bar start, IST
+    Column("open", Float), Column("high", Float), Column("low", Float), Column("close", Float),
+    Column("volume", Float),
+    UniqueConstraint("symbol", "ts", name="uq_intraday_bar"),
+)
+
+# One row per symbol per day per mode: the trade the intraday rules took.
+intraday_trades = Table(
+    "intraday_trades", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("day", Date, nullable=False),
+    Column("symbol", String(32), nullable=False),
+    Column("mode", String(8), nullable=False),       # paper | live
+    Column("side", String(8)),                       # LONG | SHORT
+    Column("entry_at", DateTime),
+    Column("entry", Float), Column("stop", Float), Column("units", Integer),
+    Column("exit_reason", String(32)),
+    Column("gross", Float), Column("charges", Float), Column("net", Float), Column("r", Float),
+    Column("closed", Boolean, default=False),
+    Column("updated_at", DateTime, default=now),
+    UniqueConstraint("day", "symbol", "mode", name="uq_intraday_trade"),
+)
+
+
 # --- Engine -----------------------------------------------------------------
 
 _engine: Engine | None = None

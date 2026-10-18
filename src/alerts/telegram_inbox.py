@@ -116,6 +116,10 @@ def parse(text: str | None, reply_to_text: str | None = None) -> Command | Probl
         return Command("undo")
     if lowered in HOLDINGS_WORDS:
         return Command("holdings")
+    if (reply_to_text or "").lstrip().upper().startswith("INTRADAY"):
+        # A separate strategy, paper-traded: its signals are never portfolio trades.
+        return Problem("Intraday signals are paper trades for now, so they aren't recorded in your "
+                       "portfolio. Your long-term trades are unaffected.")
 
     price: float | None = None
     match = PRICE.search(raw)
