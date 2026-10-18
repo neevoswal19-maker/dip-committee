@@ -472,6 +472,9 @@ intraday:
 # US stocks and ETFs through Groww (GIFT City, cleared by Alpaca).
 # RESEARCH ONLY: nothing here is scanned or alerted until the US research
 # (jobs/us_research.py) passes its pre-registered gate.
+# Result, 2026-10-14 (reports/us_research.md, reports/us_per_stock.md):
+# FAILED. Neither the portfolio nor single stocks beat holding SPY in both
+# 2014-21 and 2022+; the ETF version failed too. Not deployed.
 # -----------------------------------------------------------------------------
 us:
   enabled: false
@@ -538,6 +541,10 @@ us:
 # ETF relative-strength swing systems (2A metals, 2B sectors, 3 portfolio).
 # RESEARCH ONLY: proposed 2026-10-17, tested by jobs/etf_swing_research.py.
 # Nothing is scanned or alerted from here.
+# Result, 2026-10-17 (reports/etf_swing_research.md): FAILED. 2A metals
+# lost money in 2014-21 (profit factor 0.33), 2B sectors missed 1.3 in
+# 2014-21 (1.10), and the portfolio lagged NIFTYBEES in both periods.
+# Removed on the owner's instruction; kept only as research.
 # -----------------------------------------------------------------------------
 etf_swing:
   capital: 500000
