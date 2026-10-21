@@ -1,13 +1,14 @@
 name: Intraday
 
-# The intraday ORB + VWAP pullback strategy, live, 9:15 to 15:12 IST in one
-# run (inside GitHub's 6-hour job limit). Paper mode until it passes its
-# 40-trade test. An external timer (cron-job.org) starts it at 9:12 IST on
+# The intraday ORB + VWAP pullback strategy, live, 9:25 to 15:12 IST in one
+# run (inside GitHub's 6-hour job limit; a 9:12 start was cut off at 15:10).
+# The 9:15-9:25 opening-range candles are read from Yahoo at 9:30.
+# Paper mode until it passes its 40-trade test. An external timer (cron-job.org) starts it at 9:25 IST on
 # weekdays; the schedule below is only a backup, because GitHub runs
 # scheduled jobs late. A second start on the same day exits at once.
 on:
   schedule:
-    - cron: "42 3 * * 1-5"           # 09:12 IST, backup only
+    - cron: "55 3 * * 1-5"           # 09:25 IST, backup only
   workflow_dispatch:
     inputs:
       no_alerts:

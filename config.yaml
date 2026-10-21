@@ -460,6 +460,7 @@ intraday:
   partial_r: 2.0                     # sell half here, stop on the rest to entry
   final_r: 2.5                       # the rest exits here (null: trail only)
   max_bar_delay_minutes: 2           # flag Yahoo bars arriving later than this
+  max_job_minutes: 345               # end, with the wrap-up, before GitHub's 6-hour limit
   costs:                             # Groww intraday, per order
     brokerage_pct: 0.1
     brokerage_max: 20.0

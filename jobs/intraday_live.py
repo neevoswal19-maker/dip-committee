@@ -7,7 +7,7 @@ paper) and keeps the day's trade in `intraday_trades`. At the end it stores
 the day's bars and sends a wrap-up with the running 40-trade test.
 
 Separate from the dip strategy: it reads and writes only intraday tables and
-alerts_sent. Started by an external timer at 9:12 IST (GitHub's own schedule
+alerts_sent. Started by an external timer at 9:25 IST (GitHub's own schedule
 runs late); a second start the same day exits at once.
 """
 
@@ -80,6 +80,12 @@ def next_wake(now: datetime) -> datetime:
     return base + timedelta(minutes=minutes, seconds=20)
 
 
+def deadline_for(now: datetime, until: time, max_minutes: float) -> datetime:
+    """When the loop must stop: the configured end, or earlier if GitHub's
+    six-hour limit would otherwise cut the run off first."""
+    return min(datetime.combine(now.date(), until), now + timedelta(minutes=max_minutes))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Intraday ORB + VWAP pullback, live")
     parser.add_argument("--no-alerts", action="store_true")
@@ -97,6 +103,13 @@ def main() -> int:
 
     now = db.now()
     day = now.date()
+    # GitHub stops a job after 6 hours. Finish (and send the wrap-up) before
+    # that, whatever time the timer started it: on 19 and 21 October a 9:12
+    # start was cut off at 15:10, before the wrap-up and the bar store.
+    deadline = deadline_for(now, until, float((cfg.get("intraday", {}) or {}).get("max_job_minutes", 345)))
+    if deadline.time() < time(15, 11):
+        log.warning("Started at %s: the run must end by %s, before the 15:10 square-off. Start it at 9:25.",
+                    now.strftime("%H:%M"), deadline.strftime("%H:%M"))
     if now.weekday() >= 5:
         log.info("Weekend; nothing to do")
         return 0
@@ -123,11 +136,9 @@ def main() -> int:
 
     while True:
         now = db.now()
-        if now.time() >= until:
+        if now >= deadline:
             break
-        wake = next_wake(now)
-        if wake.time() > until:
-            wake = datetime.combine(day, until)
+        wake = min(next_wake(now), deadline)
         clock.sleep(max(0.0, (wake - db.now()).total_seconds()))
         now = db.now()
         if now.time() < OPEN:

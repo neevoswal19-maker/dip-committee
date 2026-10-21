@@ -308,3 +308,15 @@ def test_the_live_targets_are_2R_then_2_5R():
     """Chosen on 2026-10-18 by the grid rule: beat 1.5R / 3R in both halves of 60 sessions."""
     live = orb.params_for("NIFTYBEES", CFG)
     assert (live["partial_r"], live["final_r"]) == (2.0, 2.5)
+
+
+def test_the_run_always_ends_before_githubs_six_hour_limit():
+    from datetime import datetime
+
+    from jobs.intraday_live import deadline_for
+
+    # 9:25 start: the full session, to 15:12.
+    assert deadline_for(datetime(2026, 10, 22, 9, 25), time(15, 12), 345) == datetime(2026, 10, 22, 15, 12)
+    # 9:12 start (the old timer): it stops itself at 14:57 and still sends the wrap-up,
+    # instead of being killed at 15:10 with nothing sent.
+    assert deadline_for(datetime(2026, 10, 22, 9, 12), time(15, 12), 345) == datetime(2026, 10, 22, 14, 57)
