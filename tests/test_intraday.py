@@ -315,8 +315,9 @@ def test_the_run_always_ends_before_githubs_six_hour_limit():
 
     from jobs.intraday_live import deadline_for
 
-    # 9:25 start: the full session, to 15:12.
-    assert deadline_for(datetime(2026, 10, 22, 9, 25), time(15, 12), 345) == datetime(2026, 10, 22, 15, 12)
-    # 9:12 start (the old timer): it stops itself at 14:57 and still sends the wrap-up,
+    # 9:25 start: the full session, to 15:12, square-off included.
+    assert deadline_for(datetime(2026, 10, 22, 9, 25), time(15, 12), 352) == datetime(2026, 10, 22, 15, 12)
+    # 9:12 start (the old timer): it stops itself at 15:04 and still sends the wrap-up,
     # instead of being killed at 15:10 with nothing sent.
-    assert deadline_for(datetime(2026, 10, 22, 9, 12), time(15, 12), 345) == datetime(2026, 10, 22, 14, 57)
+    assert deadline_for(datetime(2026, 10, 22, 9, 12), time(15, 12), 352) == datetime(2026, 10, 22, 15, 4)
+    assert CFG.get("intraday.max_job_minutes") == 352

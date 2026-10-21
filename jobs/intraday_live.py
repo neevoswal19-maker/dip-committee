@@ -106,7 +106,7 @@ def main() -> int:
     # GitHub stops a job after 6 hours. Finish (and send the wrap-up) before
     # that, whatever time the timer started it: on 19 and 21 October a 9:12
     # start was cut off at 15:10, before the wrap-up and the bar store.
-    deadline = deadline_for(now, until, float((cfg.get("intraday", {}) or {}).get("max_job_minutes", 345)))
+    deadline = deadline_for(now, until, float((cfg.get("intraday", {}) or {}).get("max_job_minutes", 352)))
     if deadline.time() < time(15, 11):
         log.warning("Started at %s: the run must end by %s, before the 15:10 square-off. Start it at 9:25.",
                     now.strftime("%H:%M"), deadline.strftime("%H:%M"))
