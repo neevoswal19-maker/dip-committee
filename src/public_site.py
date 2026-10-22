@@ -231,16 +231,16 @@ def _candidates(rows: list[dict[str, Any]]) -> str:
         conviction = '<span class="dim">-</span>' if r.get("vetoed") else _num(r.get("conviction"), 0)
         body.append(
             f'<tr><td class="sym">{_e(r["symbol"])}<span class="sub">{_e(r.get("sector") or "")}</span></td>'
-            f'<td class="n">{_num(r.get("close"), 2, "&#8377;")}</td>'
-            f'<td class="n">{_num(r.get("drawdown_pct"), 1)}%</td>'
             f'<td>{_stance(r.get("stance"), r.get("vetoed"))}{stamp}</td>'
             f'<td class="n">{conviction}</td>'
-            f'<td>{_e((r.get("valuation") or "").title()) or "<span class=dim>-</span>"}</td></tr>')
+            f'<td>{_e((r.get("valuation") or "").title()) or "<span class=dim>-</span>"}</td>'
+            f'<td class="n">{_num(r.get("close"), 2, "&#8377;")}</td>'
+            f'<td class="n">{_num(r.get("drawdown_pct"), 1)}%</td></tr>')
     out = []
     if done:
-        out.append('<div class="table"><table><thead><tr><th>Stock</th><th class="n">Price</th>'
-                   '<th class="n">Off high</th><th>Verdict</th><th class="n">Conviction</th><th>Valuation</th>'
-                   '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
+        out.append('<div class="table"><table><thead><tr><th>Stock</th><th>Verdict</th>'
+                   '<th class="n">Conviction</th><th>Valuation</th><th class="n">Price</th>'
+                   '<th class="n">Off high</th></tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
     else:
         out.append('<p class="empty">The committee has not reviewed this session\'s candidates yet.</p>')
     if waiting:
@@ -282,11 +282,12 @@ def _intraday(card: dict[str, Any], trades: list[dict[str, Any]]) -> str:
     if trades:
         rows = "".join(
             f'<tr><td>{_date(t.get("day"))}</td><td class="sym">{_e(t.get("symbol"))}</td>'
-            f'<td>{_e((t.get("side") or "").title())}</td><td class="n">{_num(t.get("entry"), 2, "&#8377;")}</td>'
             f'<td class="n {"pos" if (t.get("r") or 0) > 0 else "neg"}">{_num(t.get("r"), 2)}R</td>'
-            f'<td>{_e((t.get("exit_reason") or "open").replace("_", " "))}</td></tr>' for t in trades)
-        out.append('<div class="table"><table><thead><tr><th>Day</th><th>ETF</th><th>Side</th>'
-                   '<th class="n">Entry</th><th class="n">Result</th><th>Exit</th></tr></thead><tbody>'
+            f'<td>{_e((t.get("side") or "").title())}</td>'
+            f'<td>{_e((t.get("exit_reason") or "open").replace("_", " "))}</td>'
+            f'<td class="n">{_num(t.get("entry"), 2, "&#8377;")}</td></tr>' for t in trades)
+        out.append('<div class="table"><table><thead><tr><th>Day</th><th>ETF</th><th class="n">Result</th>'
+                   '<th>Side</th><th>Exit</th><th class="n">Entry</th></tr></thead><tbody>'
                    + rows + "</tbody></table></div>")
     else:
         out.append('<p class="empty">No paper trades yet. Setups are rare: about one every three sessions.</p>')
@@ -368,7 +369,7 @@ def render(snapshot: dict[str, Any]) -> str:
       <h2>How it was tested</h2>
       <p>Each rule was backtested on data available at the time, with Groww's real charges and entry at
       the next day's open. Delivery data was rebuilt from 1,759 daily NSE files. From 2020 to 2026:</p>
-      <div class="table"><table><thead><tr><th></th><th class="n">Growth a year</th>
+      <div class="table wrap"><table><thead><tr><th></th><th class="n">Growth a year</th>
       <th class="n">Worst fall</th></tr></thead><tbody>{backtest_rows}</tbody></table></div>
       <p class="fine">Backtests use today's index members, so companies that failed and dropped out are
       missing, and returns are before tax. Read them as flattering. The committee itself cannot be
@@ -450,6 +451,9 @@ tbody tr{transition:background .2s}
 tbody tr:hover{background:var(--chip)}
 .n{text-align:right;font-family:"Geist Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
 th.n{font-family:inherit}
+.hero>*,.split>*,.section-head>*{min-width:0}
+.table{max-width:100%}
+.table.wrap td:first-child{white-space:normal;min-width:12ch}
 .more{margin-top:14px;color:var(--muted);font-size:.88rem}
 .more summary{cursor:pointer;width:fit-content;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:4px}
 .more p{margin-top:10px;line-height:1.8;font-family:"Geist Mono",ui-monospace,monospace;font-size:.8rem}
