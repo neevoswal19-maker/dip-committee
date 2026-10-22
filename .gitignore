@@ -11,3 +11,4 @@ reports/*.html
 reports/*.json
 .pytest_cache/
 .DS_Store
+site/
