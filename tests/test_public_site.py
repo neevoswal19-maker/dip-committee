@@ -70,6 +70,24 @@ def test_the_page_shows_the_scan_verdicts_calls_and_paper_test(fresh_db):
     assert "J&amp;KBANK" in html and "J&KBANK" not in html      # escaped
 
 
+def test_verdicts_lead_vetoes_say_so_and_the_unreviewed_fold_away(fresh_db):
+    seed()
+    with db.connection() as conn:
+        scan_id = conn.execute(db.scans.select()).first().id
+        for rank, symbol in ((3, "VETOCO"), (4, "WAITCO")):
+            conn.execute(db.candidates.insert().values(scan_id=scan_id, symbol=symbol, rank=rank, close=100.0,
+                                                       drawdown_pct=15.0, screen_score=50.0))
+        conn.execute(db.committee_runs.insert().values(symbol="VETOCO", run_at=NOW, trade_date=date(2026, 10, 21),
+                                                       price_at_run=100.0, stance="NO_BUY", conviction=0.0,
+                                                       forensics_veto=True))
+    html = page()
+    table = html[html.index("<tbody>"):html.index("</tbody>")]
+    assert table.index("SAILIFE") < table.index("J&amp;KBANK") < table.index("VETOCO")   # buy, watch, no
+    assert "Vetoed" in table and "WAITCO" not in table
+    assert "1 more passed the screen" in html and "WAITCO" in html
+    assert '<span class="funnel-n">3</span><span class="funnel-label">Reviewed' in html
+
+
 def test_the_owners_holdings_and_sizes_never_appear(fresh_db):
     seed()
     html = page()

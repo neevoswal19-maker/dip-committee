@@ -76,6 +76,7 @@ def gather(cfg: Any, *, regime_fn: Callable[[], Any] | None = None, now: datetim
                 "symbol": row["symbol"], "sector": sectors.get(row["symbol"]),
                 "close": row.get("close"), "drawdown_pct": row.get("drawdown_pct"),
                 "stance": v.get("stance"), "conviction": v.get("conviction"), "valuation": v.get("valuation"),
+                "vetoed": bool(v.get("forensics_veto")), "verdict_at": v.get("run_at"),
             })
 
     snapshot["calls"] = _recent_calls(now.date())
@@ -166,7 +167,9 @@ STANCE_CLASS = {"BUY": "buy", "WATCH": "watch", "NO_BUY": "no"}
 STANCE_TEXT = {"BUY": "Buy", "WATCH": "Watch", "NO_BUY": "No buy"}
 
 
-def _stance(stance: str | None) -> str:
+def _stance(stance: str | None, vetoed: bool = False) -> str:
+    if vetoed:
+        return '<span class="chip no">Vetoed</span>'
     if not stance:
         return '<span class="chip">Not assessed</span>'
     return f'<span class="chip {STANCE_CLASS.get(stance, "")}">{_e(STANCE_TEXT.get(stance, stance))}</span>'
@@ -206,22 +209,45 @@ def _market_line(market: dict[str, Any] | None) -> str:
             f'<strong>{_e(label)}</strong>. The Nifty 500 is {where}.</p>')
 
 
+ORDER = {"BUY": 0, "WATCH": 1, "NO_BUY": 2}
+
+
+def reviewed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Candidates with a committee verdict: buys, then watches, then no-buys."""
+    done = [r for r in rows if r.get("stance")]
+    return sorted(done, key=lambda r: (ORDER.get(r["stance"], 3), -(r.get("conviction") or 0)))
+
+
 def _candidates(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return ('<p class="empty">No stock passed the screen in this session. Quiet days are normal: '
                 'most of the Nifty 500 is either not in a dip or not in an uptrend.</p>')
+    done = reviewed(rows)
+    waiting = [r for r in rows if not r.get("stance")]
     body = []
-    for r in rows:
+    for r in done:
+        when = r.get("verdict_at")
+        stamp = f'<span class="sub">{_e(when.strftime("%d %b"))}</span>' if hasattr(when, "strftime") else ""
+        conviction = '<span class="dim">-</span>' if r.get("vetoed") else _num(r.get("conviction"), 0)
         body.append(
             f'<tr><td class="sym">{_e(r["symbol"])}<span class="sub">{_e(r.get("sector") or "")}</span></td>'
             f'<td class="n">{_num(r.get("close"), 2, "&#8377;")}</td>'
             f'<td class="n">{_num(r.get("drawdown_pct"), 1)}%</td>'
-            f'<td>{_stance(r.get("stance"))}</td>'
-            f'<td class="n">{_num(r.get("conviction"), 0)}</td>'
+            f'<td>{_stance(r.get("stance"), r.get("vetoed"))}{stamp}</td>'
+            f'<td class="n">{conviction}</td>'
             f'<td>{_e((r.get("valuation") or "").title()) or "<span class=dim>-</span>"}</td></tr>')
-    return ('<div class="table"><table><thead><tr><th>Stock</th><th class="n">Price</th>'
-            '<th class="n">Off high</th><th>Verdict</th><th class="n">Conviction</th><th>Valuation</th>'
-            '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
+    out = []
+    if done:
+        out.append('<div class="table"><table><thead><tr><th>Stock</th><th class="n">Price</th>'
+                   '<th class="n">Off high</th><th>Verdict</th><th class="n">Conviction</th><th>Valuation</th>'
+                   '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>")
+    else:
+        out.append('<p class="empty">The committee has not reviewed this session\'s candidates yet.</p>')
+    if waiting:
+        names = ", ".join(f"{_e(r['symbol'])}" for r in waiting)
+        out.append(f'<details class="more"><summary>{len(waiting)} more passed the screen and wait their turn: '
+                   f'the committee reviews the highest-ranked few each morning</summary><p>{names}</p></details>')
+    return "".join(out)
 
 
 def _calls(rows: list[dict[str, Any]]) -> str:
@@ -244,9 +270,9 @@ def _intraday(card: dict[str, Any], trades: list[dict[str, Any]]) -> str:
     stats = [
         ("Trades", f"{n} / {needed}"),
         ("Won", f"{card['win_rate']:.0%}" if n else "-"),
-        ("Profit factor", "inf" if n and card.get("profit_factor") == float("inf")
+        ("Profit factor", "No losses yet" if n and card.get("profit_factor") == float("inf")
          else f"{card['profit_factor']:.2f}" if n else "-"),
-        ("Net on paper", f"&#8377;{card['net']:+,.0f}" if n else "-"),
+        ("Net on paper", (f"{'+' if card['net'] >= 0 else '-'}&#8377;{abs(card['net']):,.0f}") if n else "-"),
     ]
     progress = min(100.0, 100.0 * n / max(needed, 1))
     out = [f'<div class="scorecard"><p class="status">{_e(status)}</p>'
@@ -311,7 +337,7 @@ def render(snapshot: dict[str, Any]) -> str:
 
   <section style="--s:1">
     <div class="section-head"><h2>Latest scan</h2>{_market_line(snapshot.get("market"))}</div>
-    {_funnel(scan_row, len(candidates))}
+    {_funnel(scan_row, len(reviewed(candidates)))}
   </section>
 
   <section style="--s:2">
@@ -423,6 +449,10 @@ tr:last-child td{border-bottom:0}
 tbody tr{transition:background .2s}
 tbody tr:hover{background:var(--chip)}
 .n{text-align:right;font-family:"Geist Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+th.n{font-family:inherit}
+.more{margin-top:14px;color:var(--muted);font-size:.88rem}
+.more summary{cursor:pointer;width:fit-content;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:4px}
+.more p{margin-top:10px;line-height:1.8;font-family:"Geist Mono",ui-monospace,monospace;font-size:.8rem}
 .sym{font-weight:600}
 .sub{display:block;font-weight:400;color:var(--muted);font-size:.78rem}
 .dim{color:var(--faint)}
