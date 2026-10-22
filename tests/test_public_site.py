@@ -134,3 +134,10 @@ def test_calls_older_than_60_days_drop_off(fresh_db):
         conn.execute(db.committee_runs.insert().values(symbol="OLDCALL", run_at=NOW, trade_date=date(2026, 7, 1),
                                                        price_at_run=100.0, stance="BUY", conviction=58.0))
     assert "OLDCALL" not in page()
+
+
+def test_nothing_on_the_page_starts_hidden(fresh_db):
+    """Animations may never run (background tabs, link previews): they must not hide content."""
+    seed()
+    html = page()
+    assert "opacity:0" not in html.replace(" ", "") and "scaleX(0)" not in html

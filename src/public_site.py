@@ -438,7 +438,7 @@ vertical-align:1px}
 .funnel-label{font-size:.9rem;font-weight:500}
 .bar{height:6px;border-radius:99px;background:var(--chip);overflow:hidden;margin:10px 0 8px}
 .bar span{display:block;height:100%;border-radius:99px;background:var(--accent);transform-origin:left;
-animation:grow .9s cubic-bezier(.16,1,.3,1) both;animation-delay:.3s}
+}
 .bar.thin{height:4px;margin:12px 0 20px}
 .table{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 table{width:100%;border-collapse:collapse;font-size:.92rem}
@@ -475,8 +475,7 @@ color:var(--muted)}
 .rejected li{padding-left:16px;border-left:2px solid var(--line);color:var(--muted);font-size:.92rem}
 .rejected strong{color:var(--text);font-weight:500}
 footer{padding-top:32px;color:var(--muted);font-size:.86rem;display:grid;gap:6px}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes rise{from{transform:translateY(6px)}to{transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:820px){main{padding:36px 16px 56px}.hero,.section-head,.split{grid-template-columns:1fr;gap:20px}
 .hero{align-items:start}.funnel{grid-template-columns:repeat(2,minmax(0,1fr))}
