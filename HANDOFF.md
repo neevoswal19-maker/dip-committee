@@ -3,7 +3,7 @@
 For a fresh session picking this project up. Written so nothing here has to be
 re-derived.
 
-Last updated: 2026-09-23 (deployed and running)
+Last updated: 2026-10-22 (dip strategy live with 8% positions; intraday strategy paper-trading)
 
 ---
 
@@ -19,7 +19,8 @@ SEBI-registered adviser.** Every verdict screen and alert carries that line.
 Keep it that way.
 
 Run it: `.venv/Scripts/python.exe -m streamlit run app.py`
-Test it: `.venv/Scripts/python.exe -m pytest tests/ -q` (250 passing)
+Test it: on GitHub - `tests.yml` runs on every push (610 passing). Pandas is blocked locally;
+see "Working without local pandas".
 
 Windows, Python 3.12, venv at `.venv`. Machine has 7.7 GB RAM and no
 dedicated GPU — **a local LLM is not viable here**, don't propose one.
@@ -37,7 +38,11 @@ These were settled with the owner. Don't relitigate them without a reason.
 | Transactions are the source of truth | Staged entries (3 tranches) and trims mean a position is never one price on one date. |
 | Charges folded into cost basis | The sizer estimates win rate and payoff from the trade ledger; gross figures would inflate position sizes over time. |
 | Streamlit Cloud + GitHub Actions + Telegram | Owner chose free hosting. Code public, data and keys private. |
-| Conviction drives the Kelly fraction, not the odds | All three bands share one prior until real trades prove conviction predicts. |
+| ~~Conviction drives the Kelly fraction~~ **Every BUY is 8% of capital** (since 2026-10-17) | Kelly at conviction 50-59 gave 3% positions, at most 8 under the 6% heat cap: 24% invested, ~4%/yr. The backtest that earns the strategy's return used 8% x 15. `sizing.mode: fixed_pct`; Kelly mode still exists. |
+| **The committee is a gate, not a score to beat** (since 2026-10-17) | BUY unless the committee objects: forensics veto, or conviction below 50. 60 was never reached (first 29 runs: 48.8-57.2) and conviction has not been shown to predict. |
+| **Delivery confirmation no longer gates** (since 2026-10-17) | First backtest with real NSE delivery (2020-26) found it removed ~70% of signals and the rest did slightly worse. Still measured, shown and in the ranking. `delivery.gate: false`. |
+| **A strategy that fails its backtest is removed, not deployed** | The owner's standing rule. Swing (Nifty 50), US stocks/ETFs and the ETF relative-strength systems all failed and are off. Research code may stay. |
+| **Intraday is a separate strategy, paper-traded first** | ORB + VWAP pullback on NIFTYBEES/BANKBEES, its own config, tables, jobs and Telegram label. Judged after 40 paper trades. |
 
 ## Numbers that were measured, not guessed
 
@@ -209,6 +214,15 @@ src/
                         lexicon, the 5 desk files, leads, cmio, registry
   committee.py          Orchestrator: three waves, persists every verdict
   ui/theme.py           Styling + Indian number formatting
+  intraday/             orb.py (rules, costs, scorecard), data.py (5-minute bars)
+  us_charges.py         Groww US cost model (research)
+  data/us_universe.py   S&P 500 / Nasdaq-100 lists (research)
+  strategy/             also simulator.py, research.py, and the research modules
+                        us_research, etf_swing, delivery_research
+views/                  also learning.py and intraday.py
+reports/                strategy_research, option1_research, us_research,
+                        us_per_stock, etf_swing_research (Markdown only;
+                        JSON is gitignored)
 ```
 
 **Two contracts hold the system together:**
@@ -274,13 +288,13 @@ multi-stock work (500 stocks: 45s vs 37min).
   implementation of how much to buy.
 
 - **Deployment layer.** `src/alerts/telegram.py`, `jobs/daily_scan.py`,
-  `jobs/keepalive.py`, and both GitHub Actions workflows. Built and dry-run
-  locally; nothing is deployed yet.
+  `jobs/keepalive.py` and the GitHub Actions workflows. Deployed and running
+  since 2026-09-23 (see "Deployed and running").
 
 **Deployment decisions already made**
 - Public GitHub repo, Neon Postgres, Streamlit Community Cloud, GitHub Actions
   cron Mon-Fri, messages at 08:00 IST (see below), Telegram alerts.
-- Alerts fire on committee **BUY only** (conviction >= 60), plus every EXIT and
+- Alerts fire on committee **BUY only** (since 2026-10-17: conviction >= 50 and no veto; was 60), plus every EXIT and
   TRIM on holdings, LTCG deadlines weekly, and scan failures. A WATCH does not
   alert - the committee declining to recommend should not train you to act.
 - **pg8000, not psycopg2.** psycopg2's compiled extension is blocked by
@@ -292,11 +306,14 @@ multi-stock work (500 stocks: 45s vs 37min).
 - **Requirements are pinned**, not ranged. Streamlit Cloud resolves fresh on
   every rebuild.
 
-**Not started**
-- Nothing is actually deployed - see "Deploying" below (`src/alerts/telegram.py`)
-- Scheduled daily scan (`.github/workflows/`, `jobs/`)
-- The self-learning loop (`src/learning/`) — schema exists, no code
-- Deployment to Streamlit Cloud + Postgres
+**Status (2026-10-22)**
+- Deployed and running: the daily scan, the Telegram inbox, the weekly
+  learning loop and sector valuations, the dashboard, and the intraday paper
+  job. All built items listed above are live.
+- Measuring, nothing to act on yet: the learning loop (weights cannot move
+  before early 2027) and the intraday 40-trade paper test.
+- Off after failing their research: swing on the Nifty 50, US stocks/ETFs,
+  the ETF relative-strength systems.
 
 ## Does the ranking predict returns? Measured 2026-09-23, then fixed.
 
@@ -566,8 +583,9 @@ the same second.
 
 | cron-job.org job | Schedule (Asia/Kolkata) | Target | Body |
 |---|---|---|---|
-| Morning Scan | Mon-Fri 07:40 | `daily-scan.yml/dispatches` | `{"ref":"main","inputs":{"morning":"true"}}` |
+| Morning Scan | Mon-Fri 07:25 | `daily-scan.yml/dispatches` | `{"ref":"main","inputs":{"morning":"true"}}` |
 | Telegram inbox | every 15 min | `telegram-inbox.yml/dispatches` | `{"ref":"main"}` |
+| Dip Committee - Intraday | Mon-Fri 09:25 | `intraday.yml/dispatches` | `{"ref":"main"}` (no inputs: the workflow would answer 422) |
 
 Both are POST requests with the headers `Accept: application/vnd.github+json`,
 `Authorization: Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28` and
@@ -577,11 +595,13 @@ cron-job.org and has an expiry date.
 
 - **Symptom of an expired token:** cron-job.org emails a failure, and the
   morning summary arrives late or not at all, since GitHub's own schedule is
-  then the only trigger. Fix: generate a new token and paste it into both
-  jobs' Authorization header.
+  then the only trigger. Fix: generate a new token and paste it into all
+  three jobs' Authorization header.
 - **A new cron-job.org job defaults to UTC**, and a Custom schedule's hour and
   minute lists allow several selections at once (a stray "1" gave 01:01
-  during setup). Check that "Next execution" reads 7:40 AM.
+  during setup). Check that "Next execution" reads 7:25 AM (9:25 AM for
+  intraday). A test run answering **401** means the Authorization header
+  holds no real token; **204** is success.
 - GitHub's own schedules stay on as backups. `--once-per-session` makes the
   second morning trigger exit without doing anything, and inbox duplicates are
   harmless because each message is claimed before it's acted on.
@@ -677,8 +697,13 @@ Smart App Control blocks pandas on the dev PC. So all testing happens on
 GitHub:
 - `tests.yml` runs on every push to every branch.
 - `tests/test_views.py` renders dashboard pages headlessly.
-- Build on a branch, and merge to `main` only when CI is green. The 7:40
-  morning job runs from `main`.
+- Build on a branch, and merge to `main` only when CI is green. The 7:25
+  morning job and the 9:25 intraday job run from `main`.
+- **Branch names trigger research workflows:** `research/**` starts the 2-hour
+  India strategy research, `us-research/**`, `etf-swing/**`,
+  `option1-research/**` and `feature/intraday-**` start theirs. Name
+  integration branches to avoid them (a `research/merge-reports` push started
+  the India run by accident and had to be cancelled).
 
 ## Valuation Analyst (added 2026-09-28): the committee is now 24 bots
 
@@ -704,16 +729,141 @@ The Fundamental bot no longer scores P/E, since counting it twice would
 double its weight. Like the rest of the committee, this can't be
 backtested. The learning loop will score it once outcomes mature.
 
+## October 2026: fixes, the live BUY rule, failed research, and intraday
+
+### Two bugs that blocked or blinded the committee (fixed 2026-10-05 and 10-12)
+- **The forensics veto fired on immaterial numbers and on lenders.** From
+  29 Sep to 5 Oct it vetoed every new candidate. Nestle India was vetoed for
+  receivables growing 70 points faster than sales, at 7 days of sales; Shriram
+  Finance and Nuvama for cash flow below profit, which is how lending works.
+  Now: the receivables test counts only at >= 30 days of sales
+  (`MATERIAL_RECEIVABLE_DAYS`), debt growth is ignored below debt/equity 0.2,
+  and lenders (`quality_gate.debt_exempt_sectors`) skip the cash-flow,
+  receivables and debt tests (`LENDER_EXEMPT_FIELDS`), abstaining when nothing
+  else is left. Real vetoes (Triveni Turbine, Emmvee) still fire.
+- **Symbols containing "&" reached NSE as `symbol=J`.** J&KBANK, M&M and the
+  like got empty announcements, insider trades and shareholding, silently.
+  `nse._symbol_param` URL-encodes the symbol in all three requests, and the
+  cache keys use the encoded form so stale empty results were dropped.
+  J&KBANK went from 56 on 64% coverage to 52 on 82%.
+
+### The live BUY rule (option 1) and its sizing (2026-10-17)
+- **BUY = passed the screen, and the committee does not object** (no forensics
+  veto, conviction >= 50: `committee.min_conviction_to_alert`). If sizing or
+  the regime refuses a position the stance shows WATCH, so a BUY alert always
+  carries a size.
+- **Every buy is 8% of capital**, whole at the signal, at most 15 positions
+  (`sizing.mode: fixed_pct`, `fixed_position_pct: 8`,
+  `staged_entry.enabled: false`). The 6% heat cap does not apply in this mode:
+  15 x 8% at a -25% stop is up to 30% of capital at risk. Sector (25%), cash
+  and minimum-size limits, the veto and the conviction floor still apply.
+- **Delivery no longer gates** (`delivery.gate: false`,
+  `screener.apply_delivery_gate`): a failed delivery stage passes with its
+  reasons kept as a note.
+- Evidence: `reports/option1_research.md` (`jobs/option1_research.py`,
+  workflow `option1-research.yml`). Delivery replayed point-in-time from 1,759
+  NSE bhavcopies (the archive starts January 2020; 2018 and earlier 404):
+
+  | Version, Rs 5 lakh | 2020-21 | 2022+ | 2020+ |
+  |---|---|---|---|
+  | Dip rules, 8% x 15 | 38.1% / -33.9% | 16.5% / -14.1% | 17.9% |
+  | Dip + delivery, 8% x 15 | 29.2% / -32.5% | 14.3% / -15.6% | 15.2% |
+  | Dip + delivery, 3% x 8 (old live sizing) | 6.1% / -9.3% | 3.0% / -6.1% | 4.4% |
+  | Nifty 50 | 19.4% / -38.4% | 5.9% / -16.5% | 9.9% |
+
+  Growth a year / worst fall. Expect about 115 buy calls a year (54-207), more
+  after selloffs. The quality gate and the committee cannot be replayed and
+  are assumed to pass.
+
+### Research that failed, and was removed (the standing rule)
+- **US stocks and ETFs** via Groww (`reports/us_research.md`,
+  `reports/us_per_stock.md`; `us.enabled: false`). The live dip rules on the
+  S&P 500 + Nasdaq-100 and 30 ETFs, after Groww's US costs: 15.2% vs SPY 14.8%
+  in 2014-21 but 5.6% vs 12.2% from 2022. Per stock, the pre-registered group
+  (the January 2014 Dow) trailed SPY over the same dates in both periods
+  (-3.7 and -9.5 points). The down-day volume stand-in for delivery did not
+  help. Universe from Wikipedia: the Nasdaq-100 list moved to "List of
+  NASDAQ-100 companies"; parse with BeautifulSoup (pandas.read_html needs
+  html5lib, not installed).
+- **ETF relative-strength swing systems** (the owner's proposal: 2A
+  gold/silver, 2B sector ETFs, 3 a 3-slot portfolio;
+  `reports/etf_swing_research.md`). 2A: profit factor 0.33 in 2014-21 (its
+  good 2022+ is the 2025-26 metals rally); 2B: 1.10 in 2014-21; the portfolio
+  lagged NIFTYBEES in both periods. For anyone revisiting: equity ETFs pay STT
+  0.001% on sells only, not 0.1%; Yahoo has two bad days (19-20 Dec 2019) in
+  GOLDBEES and NIFTYBEES at 1/100 and 1/10 scale (`etf_swing.repair_splits`);
+  Yahoo has no history for the Metal and Auto indices (`etf_swing.composite`
+  builds them from the top 5 stocks). A circulated results table claiming
+  +180% in 24 months for these systems was arithmetic on the worked examples,
+  not a backtest.
+- The simulator gained two hooks for this research: `cost_fn` (another
+  market's cost schedule) and `size_fn` (e.g. a fixed rupee risk to the
+  stop). Indian runs are unchanged without them.
+
+### Intraday: ORB + VWAP/20-EMA pullback (paper since 2026-10-19)
+A separate strategy (`src/intraday/`, `intraday:` in config, tables
+`intraday_bars` and `intraday_trades`, label `INTRADAY · PAPER`). Nothing in
+it reads or writes the screener, committee, sizing or portfolio, and the
+Telegram recorder ignores replies to INTRADAY messages.
+- **Instruments:** NIFTYBEES and BANKBEES. The indices carry no volume, so
+  VWAP needs the ETFs; one futures lot risks more than Rs 5,000 at these stops.
+- **Rules** (`orb.session_events`, one pure function over completed 5-minute
+  bars, shared by the backtest, the live job and the tests):
+  - opening range from the 9:15-9:25 bars; the day is skipped above a 0.85%
+    (NIFTYBEES) / 1.10% (BANKBEES) range
+  - arm on a close beyond the range, with the close beyond VWAP and the
+    20 EMA, volume above its 10-bar average, and the EMA moving the trade's
+    way and on its side of VWAP (bars starting 9:30-10:55)
+  - enter on the first candle, 2nd to 6th after the breakout, that closes
+    back beyond both lines after a touch within 0.15% of the EMA or VWAP, with
+    lighter pullback volume and RSI(14) on the trade's side of 50; entries
+    until 13:30; one trade per ETF per day
+  - stop beyond the pullback's extreme or 0.10% beyond VWAP, whichever is
+    further
+- **Targets: half at 2R (stop to entry), the rest at 2.5R** (`partial_r`,
+  `final_r`), else a 5-minute close back through the 20 EMA, else 15:10.
+  Chosen 2026-10-18 by a pre-set rule (beat the document's 1.5R / 3R in both
+  halves of the 60 sessions). The final target hardly mattered; selling half
+  at 2R did.
+- **Size:** Rs 5,000 / stop distance, capped at Rs 7.5 lakh exposure (Rs 1.5
+  lakh margin x 5 MIS). Stops are about 0.25-0.5%, so the cap usually binds
+  and trades risk about Rs 1,900-2,300.
+- **Paper test** (`orb.PASS`): after 40 trades, profit factor >= 1.3, a
+  positive average after costs, worst drawdown no deeper than 10%. Pass:
+  `intraday.mode: live`. Fail: removed.
+- **Backtest so far** (`jobs/intraday_research.py`, weekly on Saturdays and on
+  demand): 62 sessions, 22 trades, 45% won, profit factor 1.61, +Rs 11,995.
+  Shorts carried it (the period was a selloff). A first look, not a verdict.
+- **Live job** (`jobs/intraday_live.py`, `intraday.yml`): one run a day,
+  started at 9:25 IST by cron-job.org (the backup schedule is also 9:25 and
+  usually late). It wakes 20 seconds after each candle, sends SETUP / SETUP
+  OFF / BUY / SHORT / PARTIAL / EXIT, saves the trade, stores the day's bars
+  and sends a 15:12 wrap-up. A second start the same day exits
+  (`claim_session`). It stops by `max_job_minutes` (352) after starting: a
+  9:12 start hit GitHub's 6-hour cap at 15:10 on 19 and 21 October and lost
+  both wrap-ups.
+- **Data delay:** Yahoo's 5-minute bars were present 20 seconds after each
+  candle closed on every check (19 and 21 Oct), and the over-2-minutes
+  warning never fired. Yahoo keeps only 60 sessions of 5-minute bars, which is
+  why they are stored. Alternatives looked at: Groww's Trade API (live data,
+  5-minute history from 2020, TOTP login without daily approval, about Rs 499
+  a month plus GST, ETF coverage unconfirmed); free broker APIs (Angel One,
+  Fyers, Upstox) each need an account, and Upstox needs a fresh token daily.
+  The owner chose to stay on Yahoo.
+- **First paper trade:** 21 Oct, BANKBEES short at 575.28, stop 577.00, half
+  at 2R and the rest at 2.5R, +Rs 4,683 after costs (+2.1R). 20 Oct was a
+  market holiday (Dussehra), and the job correctly stopped at 9:40.
+
 ## Open questions
 
-- **Does conviction predict returns?** Still open, and now the most important
-  question in the project. The screen score does not predict. The committee is
-  deterministic precisely so this can be measured: run it across historical
-  dates, correlate conviction against forward returns, report the information
-  coefficient. Historical ownership and news coverage is thin, so a backtest
-  can only validate the price/delivery/fundamental bots - say so rather than
-  implying full coverage. If conviction fails the same way the screen score
-  did, the desk weights need rethinking before any of this is trusted.
+- **Does the committee's conviction predict returns?** Still open. It cannot
+  be backtested (past news, filings and fundamentals cannot be rebuilt), so
+  the learning loop measures it live: first 30-day outcomes about 22 October
+  2026, enough 90-day outcomes to move weights in early 2027. Until then the
+  committee is used only as a gate (a veto, or net-negative below 50), never
+  to size or rank.
+- **Does the intraday strategy have an edge?** The 40-trade paper test
+  decides; at about one trade every three sessions that is roughly six months.
 - **The Groww importer is unverified against a real file.** Built against a
   synthetic one with alias matching and a manual column mapper. Ask the owner
   for an actual export.
@@ -731,6 +881,11 @@ backtested. The learning loop will score it once outcomes mature.
   bias is worse than none.
 - Design skills in the owner's CLAUDE.md apply to frontend work — see the table
   there for which skill covers what.
+- **A strategy that fails its backtest is removed, not run anyway.** Pass
+  criteria are written down before the test runs and not loosened after. When
+  the owner proposes a strategy, test it first and say plainly if it fails.
+- Secrets never go into chat: tokens and keys live in GitHub secrets,
+  cron-job.org, `.env` and Streamlit's settings, set by the owner.
 
 
 ---
@@ -744,8 +899,9 @@ Live as of 2026-09-23. All of it on free tiers.
 | Repo | github.com/neevoswal19-maker/dip-committee (public) |
 | Database | Neon Postgres, ap-southeast-1, pooled endpoint |
 | Dashboard | Streamlit Community Cloud, **Python 3.12** |
-| Scheduled scan | GitHub Actions, starts 07:17 IST Mon-Fri, messages held until 08:00 |
+| Scheduled scan | GitHub Actions, started 07:25 IST Mon-Fri by cron-job.org (07:17 schedule as backup), messages held until 08:00 |
 | Alerts | Telegram @cmiostock_bot |
+| Intraday paper job | GitHub Actions `intraday.yml`, started 09:25 IST Mon-Fri by cron-job.org, runs to 15:12 |
 
 Verified end to end: a real Actions run scanned 120 stocks in 320s, wrote to
 Neon, and delivered a Telegram summary. Exit 0.
