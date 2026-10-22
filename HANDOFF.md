@@ -854,6 +854,19 @@ Telegram recorder ignores replies to INTRADAY messages.
   at 2R and the rest at 2.5R, +Rs 4,683 after costs (+2.1R). 20 Oct was a
   market holiday (Dussehra), and the job correctly stopped at 9:40.
 
+### Public demo page (2026-10-22)
+A read-only page for anyone (the owner links it from a resume):
+https://neevoswal19-maker.github.io/dip-committee/. `src/public_site.py`
+gathers the latest scan funnel, the committee's verdicts, BUY calls from the
+last 60 days, the market trend and the intraday paper test, and renders one
+static HTML file with no scripts; `jobs/public_site.py` writes it and
+`public-site.yml` deploys it to GitHub Pages (enabled with build type
+"workflow"). **It never reads positions, transactions, trades, sizing or
+secrets** - tests plant a holding and check it, and listen on the engine to
+prove no portfolio table is queried. Motion only moves content, never hides
+it (animations do not run in background tabs or link previews). The
+Streamlit dashboard stays private behind its password.
+
 ## Open questions
 
 - **Does the committee's conviction predict returns?** Still open. It cannot
@@ -902,6 +915,7 @@ Live as of 2026-09-23. All of it on free tiers.
 | Scheduled scan | GitHub Actions, started 07:25 IST Mon-Fri by cron-job.org (07:17 schedule as backup), messages held until 08:00 |
 | Alerts | Telegram @cmiostock_bot |
 | Intraday paper job | GitHub Actions `intraday.yml`, started 09:25 IST Mon-Fri by cron-job.org, runs to 15:12 |
+| Public demo page | https://neevoswal19-maker.github.io/dip-committee/ - GitHub Pages, rebuilt by `public-site.yml` after every morning scan and intraday run, and daily at 16:00 IST |
 
 Verified end to end: a real Actions run scanned 120 stocks in 320s, wrote to
 Neon, and delivered a Telegram summary. Exit 0.
