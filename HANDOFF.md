@@ -168,6 +168,15 @@ Don't re-estimate these; they came from real data.
   sizing band's red-flag test, so a duplicate could shrink a position for no
   reason. `cmio._dedupe_flags` matches on the text after the source prefix.
 
+- **An unpinned dependency of a pinned package broke every connection.**
+  `scramp` 1.5.0 (released 2026-10-25 17:43 UTC) removed
+  `make_channel_binding`, which pg8000 1.31.5 calls on every connection. pg8000
+  was pinned but `scramp` was not, so the next run installed 1.5.0 and failed;
+  every job and the next Streamlit rebuild would have followed. `scramp` and
+  `asn1crypto` are now pinned beside pg8000, and `tests/test_dependencies.py`
+  fails CI if the combination breaks. If a job suddenly fails in
+  `pg8000/core.py`, check what `pip` installed against the last good run.
+
 ---
 
 ### Timestamps from different machines disagreed (found 2026-09-23)
