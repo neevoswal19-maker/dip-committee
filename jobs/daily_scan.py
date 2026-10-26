@@ -157,11 +157,18 @@ def alert_on_buys(cfg) -> list[str]:
     system declined to recommend.
     """
     sent: list[str] = []
-    _, candidates = scan.latest_candidates()
+    latest, candidates = scan.latest_candidates()
+    session = (latest or {}).get("trade_date")
 
     for candidate in candidates:
         run = committee_module.latest_run(candidate["symbol"])
         if not run or run.get("stance") != "BUY":
+            continue
+        # Only today's verdicts. The committee reviews a few candidates a
+        # day, so a stock's latest run can be days old; on 2026-10-26 Friday's
+        # verdicts for APARINDS and SAILIFE went out again with Friday's
+        # price and size, as if new.
+        if session is not None and run.get("trade_date") != session:
             continue
 
         report = committee_module.rebuild_report(run)

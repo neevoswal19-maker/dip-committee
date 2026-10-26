@@ -630,8 +630,19 @@ def _migrate(engine: Engine) -> list[str]:
     return added
 
 
+#: Engines already checked this process. Checking costs ~30 round trips (one
+#: has-table query per table, plus the column inspection), about 8 s from a
+#: GitHub runner to Neon; init_db is called from dozens of places, and per
+#: candidate in the alert loop it cost 19 minutes on 2026-10-26. Engine
+#: objects are kept, not their ids, so a test's new engine is never mistaken
+#: for an old one.
+_initialized: list[Engine] = []
+
+
 def init_db(drop: bool = False) -> None:
     engine = get_engine()
+    if not drop and any(done is engine for done in _initialized):
+        return
     if drop:
         metadata.drop_all(engine)
     _migrate(engine)
@@ -643,6 +654,9 @@ def init_db(drop: bool = False) -> None:
             # WAL lets the dashboard read while the scan job writes.
             conn.execute(text("PRAGMA journal_mode=WAL"))
             conn.execute(text("PRAGMA synchronous=NORMAL"))
+
+    if not any(done is engine for done in _initialized):
+        _initialized.append(engine)
 
 
 @contextmanager
