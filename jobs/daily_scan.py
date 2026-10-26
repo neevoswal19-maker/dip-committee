@@ -149,6 +149,37 @@ def check_holdings(cfg) -> list[dict]:
     return alerts
 
 
+def first_buy_of_episode(symbol: str, cfg) -> bool:
+    """Whether a BUY on `symbol` is new enough to alert.
+
+    True if it was never alerted, if its last delivered BUY alert is older
+    than alerts.buy_realert_days, or if a non-BUY verdict came after that
+    alert (the BUY lapsed and has now returned). Otherwise the owner already
+    has the alert, and the stock appears only in the morning summary.
+    """
+    from sqlalchemy import desc, select
+
+    window = int(cfg.get("alerts.buy_realert_days", 30))
+    with db.connection() as conn:
+        last = conn.execute(
+            select(db.alerts_sent.c.sent_at)
+            .where(db.alerts_sent.c.alert_type == "new_buy_candidate")
+            .where(db.alerts_sent.c.symbol == symbol)
+            .where(db.alerts_sent.c.delivered.is_(True))
+            .order_by(desc(db.alerts_sent.c.id)).limit(1)
+        ).scalar()
+        if last is None or (db.now() - last).days > window:
+            return True
+        lapsed = conn.execute(
+            select(db.committee_runs.c.id)
+            .where(db.committee_runs.c.symbol == symbol.upper())
+            .where(db.committee_runs.c.stance != "BUY")
+            .where(db.committee_runs.c.run_at > last)
+            .limit(1)
+        ).first()
+    return lapsed is not None
+
+
 def alert_on_buys(cfg) -> list[str]:
     """Alert on committee BUY verdicts from today's scan.
 
@@ -169,6 +200,8 @@ def alert_on_buys(cfg) -> list[str]:
         # verdicts for APARINDS and SAILIFE went out again with Friday's
         # price and size, as if new.
         if session is not None and run.get("trade_date") != session:
+            continue
+        if not first_buy_of_episode(candidate["symbol"], cfg):
             continue
 
         report = committee_module.rebuild_report(run)

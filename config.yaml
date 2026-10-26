@@ -426,6 +426,11 @@ alerts:
     learning_change: true
     scan_failure: true
   max_candidates_per_alert: 5
+  # A BUY alert goes out the first time a stock becomes a BUY (decided
+  # 2026-10-26: SAILIFE had been alerted six days running). It alerts again
+  # only after the BUY lapses (a WATCH or NO BUY verdict in between) or after
+  # this many days; on the days between it shows only in the morning summary.
+  buy_realert_days: 30
   disclaimer: "Research output, not investment advice. Not a SEBI-registered adviser."
 
 scan:

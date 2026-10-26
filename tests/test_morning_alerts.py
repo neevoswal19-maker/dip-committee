@@ -74,3 +74,74 @@ def test_only_todays_buy_verdicts_are_alerted(fresh_db, monkeypatch):
 
     assert daily_scan.alert_on_buys(CFG) == ["NEWBUY"]
     assert sent == ["BUY NEWBUY"]                  # Friday's OLDBUY verdict is not re-sent
+
+
+# --- Option (a), 2026-10-26: alert only the first time a stock becomes a BUY ----------
+
+
+def _alerted(symbol: str, days_ago: float, delivered: bool = True):
+    from datetime import timedelta
+
+    with db.connection() as conn:
+        conn.execute(db.alerts_sent.insert().values(
+            sent_at=db.now() - timedelta(days=days_ago), channel="telegram", alert_type="new_buy_candidate",
+            symbol=symbol, dedupe_key=f"buy|{symbol}|{days_ago}", body="", delivered=delivered))
+
+
+def _verdict(symbol: str, stance: str, days_ago: float):
+    from datetime import timedelta
+
+    with db.connection() as conn:
+        conn.execute(db.committee_runs.insert().values(
+            symbol=symbol, run_at=db.now() - timedelta(days=days_ago), stance=stance, conviction=55.0))
+
+
+def test_a_stock_never_alerted_alerts(fresh_db):
+    from jobs.daily_scan import first_buy_of_episode
+
+    assert first_buy_of_episode("FRESH", CFG) is True
+
+
+def test_a_stock_that_stays_a_buy_does_not_alert_again(fresh_db):
+    from jobs.daily_scan import first_buy_of_episode
+
+    _alerted("STILLBUY", days_ago=3)
+    _verdict("STILLBUY", "BUY", days_ago=2)
+    _verdict("STILLBUY", "BUY", days_ago=1)
+    assert first_buy_of_episode("STILLBUY", CFG) is False
+
+
+def test_a_buy_that_lapsed_and_returned_alerts_again(fresh_db):
+    from jobs.daily_scan import first_buy_of_episode
+
+    _alerted("CAMEBACK", days_ago=6)
+    _verdict("CAMEBACK", "WATCH", days_ago=3)
+    _verdict("CAMEBACK", "BUY", days_ago=0.1)
+    assert first_buy_of_episode("CAMEBACK", CFG) is True
+
+
+def test_an_alert_older_than_the_window_alerts_again(fresh_db):
+    from jobs.daily_scan import first_buy_of_episode
+
+    _alerted("LONGAGO", days_ago=CFG.get("alerts.buy_realert_days") + 2)
+    assert first_buy_of_episode("LONGAGO", CFG) is True
+
+
+def test_a_send_that_never_arrived_does_not_count(fresh_db):
+    from jobs.daily_scan import first_buy_of_episode
+
+    _alerted("FAILEDSEND", days_ago=1, delivered=False)
+    assert first_buy_of_episode("FAILEDSEND", CFG) is True
+
+
+def test_the_alert_loop_skips_a_buy_already_alerted(fresh_db, monkeypatch):
+    from jobs import daily_scan
+
+    _seed(date(2026, 10, 26))
+    _alerted("NEWBUY", days_ago=1)                 # alerted yesterday, still a BUY today
+    sent = []
+    monkeypatch.setattr(daily_scan.committee_module, "rebuild_report",
+                        lambda run: SimpleNamespace(symbol=run["symbol"]))
+    monkeypatch.setattr(daily_scan.telegram, "buy_candidate", lambda report, cfg: f"BUY {report.symbol}")
+    monkeypatch.setattr(daily_scan.telegram, "send", lambda body, **kw: (sent.append(body), True)[1])
+    assert daily_scan.alert_on_buys(CFG) == [] and sent == []

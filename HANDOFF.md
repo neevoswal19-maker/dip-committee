@@ -303,7 +303,10 @@ multi-stock work (500 stocks: 45s vs 37min).
 **Deployment decisions already made**
 - Public GitHub repo, Neon Postgres, Streamlit Community Cloud, GitHub Actions
   cron Mon-Fri, messages at 08:00 IST (see below), Telegram alerts.
-- Alerts fire on committee **BUY only** (since 2026-10-17: conviction >= 50 and no veto; was 60), plus every EXIT and
+- Alerts fire on committee **BUY only** (since 2026-10-17: conviction >= 50 and no veto; was 60), and
+  since 2026-10-26 **only the first time a stock becomes a BUY**: a stock that stays a BUY shows
+  only in the morning summary, and re-alerts after a lapse (a non-BUY verdict in between) or
+  `alerts.buy_realert_days` (30). Only today's verdicts alert, never an older one. Plus every EXIT and
   TRIM on holdings, LTCG deadlines weekly, and scan failures. A WATCH does not
   alert - the committee declining to recommend should not train you to act.
 - **pg8000, not psycopg2.** psycopg2's compiled extension is blocked by
