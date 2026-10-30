@@ -67,7 +67,7 @@ def main() -> int:
     costs = lambda side, qty, price: charges.estimate(side, qty, price, cfg=cfg).total  # noqa: E731
     universes = (("Nifty 100", {s: f for s, f in frames.items() if s in n100}), ("Nifty 500", frames))
 
-    variants, trade_rows = [], []
+    variants, trade_rows, control = [], [], {}
     for depth in DEPTHS:
         eps = cr.episodes(idx["close"], depth)
         log.info("%.0f%% trigger: %d episodes: %s", depth, len(eps), [str(e.trigger_date.date()) for e in eps])
@@ -81,6 +81,8 @@ def main() -> int:
                                           for s, p in chosen.items()) if t is not None]
                     b = cr.basket(trades, costs, CAPITAL)
                     it = cr.index_trade(idx["close"], idx.get("open", idx["close"]), e)
+                    if (uname, e.trigger_date) not in control:
+                        control[(uname, e.trigger_date)] = survivors(ufr, e, it["sessions"], costs)
                     rows.append({
                         "trigger": e.trigger_date.date().isoformat(), "peak": e.peak_date.date().isoformat(),
                         "index_fall_pct": e.index_drawdown * 100, "judged": e.trigger_date <= cutoff,
@@ -89,6 +91,7 @@ def main() -> int:
                         "stopped": b.get("stopped", 0), "open": b.get("open", 0),
                         "avg_months": (b.get("avg_sessions") or 0) / 21, "index_pct": it["return_pct"],
                         "index_months": it["sessions"] / 21, "index_reached": it["reached"],
+                        "survivors_pct": control[(uname, e.trigger_date)],
                     })
                     trade_rows += [{"variant": f"{depth:.0f}% {uname} {ekey}", "trigger": e.trigger_date.date(),
                                     "symbol": t.symbol, "entry_date": t.entry_date.date(), "entry": round(t.entry, 2),
@@ -98,8 +101,12 @@ def main() -> int:
                 judged = [r for r in rows if r["judged"] and r["trades"] and r["index_pct"] is not None]
                 ok, why = cr.judge(judged)
                 score = float(np.mean([r["per_year_pct"] for r in judged])) if judged else None
+                gaps = [(r["basket_pct"] - r["index_pct"], r["survivors_pct"] - r["index_pct"])
+                        for r in judged if r["survivors_pct"] is not None]
                 variants.append({"depth": depth, "universe": uname, "exit": ekey, "exit_label": elabel,
-                                 "passed": ok, "reasons": why, "score": score, "episodes": rows})
+                                 "passed": ok, "reasons": why, "score": score, "episodes": rows,
+                                 "edge_vs_index": float(np.mean([g[0] for g in gaps])) if gaps else None,
+                                 "survivor_edge": float(np.mean([g[1] for g in gaps])) if gaps else None})
                 log.info("%.0f%% %s %s: %s %s", depth, uname, ekey, "PASS" if ok else "FAIL", "; ".join(why))
 
     passing = [v for v in variants if v["passed"]]
@@ -118,6 +125,19 @@ def main() -> int:
               f"{'; '.join(v['reasons'])}")
     print("Choice:", "none passed" if not choice else f"{choice['depth']:.0f}% {choice['universe']} {choice['exit']}")
     return 0
+
+
+def survivors(frames, episode, sessions, costs):
+    """Diagnostic, not a pass criterion: every stock with two years of history,
+    bought at the same open and sold when the index trade ends. Today's members
+    beating the index by this much is survivorship, not the strategy."""
+    if not sessions:
+        return None
+    trades = [t for t in (cr.trade(f, s, episode.trigger_date, float("inf"), stop_pct=None, max_hold=sessions)
+                          for s, f in frames.items()
+                          if (f["close"].dropna().index <= episode.trigger_date).sum() >= cr.MIN_HISTORY)
+              if t is not None]
+    return cr.basket(trades, costs, CAPITAL).get("net_pct")
 
 
 def write_report(variants, choice, index_name, idx, n_frames, seconds):
@@ -141,22 +161,29 @@ def write_report(variants, choice, index_name, idx, n_frames, seconds):
         "**Read with this caveat:** today's index members only, so companies that never recovered and "
         "dropped out are missing, which flatters the target rate most of all. Returns are before tax.",
         "",
+        "**Survivorship check (a diagnostic, not a pass criterion):** 'All survivors' buys every stock in the "
+        "universe with two years of history at the same open and sells when the index trade ends. How far it "
+        "beats the index is roughly how much today's membership alone flatters any basket. The strategy's "
+        "real edge is at most its own gap over the index minus that.",
+        "",
         f"## Decision: {decision}",
         "",
-        "| Trigger | Universe | Exit | Result | Avg return a year | Why it failed |",
-        "|---|---|---|---|---|---|",
+        "| Trigger | Universe | Exit | Result | Avg return a year | Beat index by (avg pts) | "
+        "All survivors beat it by | Why it failed |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for v in variants:
         lines.append(f"| {v['depth']:.0f}% | {v['universe']} | {v['exit']} | {'PASS' if v['passed'] else 'fail'} | "
-                     f"{num(v['score'])}% | {'; '.join(v['reasons']) or '-'} |")
+                     f"{num(v['score'])}% | {num(v['edge_vs_index'])} | {num(v['survivor_edge'])} | "
+                     f"{'; '.join(v['reasons']) or '-'} |")
     for v in variants:
         lines += ["", f"### {v['depth']:.0f}% fall, {v['universe']}, {v['exit_label']}", "",
-                  "| Triggered | Index fall | Stocks | Basket | Index trade | Reached old high | Stopped | "
-                  "Avg months | Judged |", "|---|---|---|---|---|---|---|---|---|"]
+                  "| Triggered | Index fall | Stocks | Basket | Index trade | All survivors | Reached old high | "
+                  "Stopped | Avg months | Judged |", "|---|---|---|---|---|---|---|---|---|---|"]
         for r in v["episodes"]:
             lines.append(f"| {r['trigger']} | {num(r['index_fall_pct'])}% | {r['trades']} | {num(r['basket_pct'])}% | "
-                         f"{num(r['index_pct'])}% | {r['target_rate']:.0%} | {r['stopped']} | "
-                         f"{r['avg_months']:.0f} | {'yes' if r['judged'] else 'in progress'} |")
+                         f"{num(r['index_pct'])}% | {num(r['survivors_pct'])}% | {r['target_rate']:.0%} | "
+                         f"{r['stopped']} | {r['avg_months']:.0f} | {'yes' if r['judged'] else 'in progress'} |")
     (REPORTS / "correction_research.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
