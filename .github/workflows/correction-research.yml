@@ -1,0 +1,43 @@
+name: Correction research
+
+# Backtests buying market corrections (src/strategy/correction.py): 3 triggers
+# x 2 universes x 2 exits, judged on pass criteria fixed before running.
+# Uploads reports/correction_research.md. Research only: no secrets, no
+# database, no alerts.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["correction-research/**"]
+
+concurrency:
+  group: correction-research-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the backtest
+        run: python jobs/correction_research.py
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: correction-research-${{ github.run_id }}
+          path: reports/correction_*
+          retention-days: 30
+          if-no-files-found: warn

@@ -575,3 +575,12 @@ etf_swing:
     auto: [M&M, MARUTI, BAJAJ-AUTO, EICHERMOT, TVSMOTOR]
     psu_bank: [SBIN, BANKBARODA, PNB, CANBK, UNIONBANK]
     pharma: [SUNPHARMA, DRREDDY, CIPLA, DIVISLAB, LUPIN]
+
+# -----------------------------------------------------------------------------
+# Correction buying (research only, src/strategy/correction.py). Buys what
+# fell in a market correction and sells at its pre-correction high. Rules and
+# pass criteria fixed 2026-10-30 in the module; nothing is alerted unless the
+# research passes and the owner approves.
+# -----------------------------------------------------------------------------
+correction:
+  enabled: false
