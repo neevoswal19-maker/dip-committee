@@ -30,7 +30,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(me
 log = logging.getLogger("correction_research")
 
 REPORTS = Path("reports")
-YEARS = 20.0
+YEARS = 25.0          # stocks need 2 years of history before the 2007-08 triggers
 DEPTHS = (10.0, 15.0, 20.0)
 EXITS = (("E1", "old high or 2 years, no stop", None), ("E2", "old high or 2 years, -25% stop", 25.0))
 CAPITAL = 500000.0
