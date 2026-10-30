@@ -105,7 +105,7 @@ def test_the_page_never_reads_a_portfolio_table(fresh_db):
     page()
     sql = " ".join(seen)
     assert "from scans" in sql, "the listener saw no queries"
-    for table in ("positions", "transactions", "trades", "telegram_inbox", "alerts_sent"):
+    for table in ("positions", "transactions", "trades", "telegram_inbox", "alerts_sent", "correction_trades"):
         assert re.search(rf"\b(from|join)\s+{table}\b", sql) is None, table
     # The same pattern must find a table the page does read, or the check above proves nothing.
     assert re.search(r"\b(from|join)\s+scans\b", sql)

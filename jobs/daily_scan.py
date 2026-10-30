@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import committee as committee_module
-from src import db, portfolio, scan
+from src import correction_paper, db, portfolio, scan
 from src.alerts import holdings_news, telegram, telegram_inbox
 from src.strategy import regime as regime_rules
 from src.config import load_config
@@ -363,6 +363,15 @@ def main() -> int:
                 dedupe_key=f"regime|{current_regime.label}|{current_regime.as_of}",
                 cfg=cfg,
             )
+
+        # Separate from the dip strategy, and on paper. A failure here must
+        # not cost the morning's alerts.
+        log.info("--- correction buying (paper)")
+        try:
+            sent = correction_paper.run(cfg, record=not args.no_alerts)
+            log.info("Sent %d correction message(s)", sent)
+        except Exception:
+            log.exception("The correction check failed")
 
         if args.summary:
             _, candidates = scan.latest_candidates()

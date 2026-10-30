@@ -533,6 +533,65 @@ def intraday_event(event: Any, mode: str, tracks: str | None = None) -> str | No
     return None
 
 
+CORRECTION_LABEL = "CORRECTION"
+
+
+def correction_label(mode: str) -> str:
+    return f"{CORRECTION_LABEL} · PAPER" if mode == "paper" else CORRECTION_LABEL
+
+
+def correction_buy(episode: Any, picks: list[dict[str, Any]], settings: dict[str, Any],
+                   last_session: date) -> list[str]:
+    """A correction triggered: the basket to buy at the next open. One or more messages."""
+    mode = str(settings.get("mode", "paper"))
+    each = float(settings["basket_capital"]) / max(1, len(picks))
+    months = int(settings["max_hold_sessions"]) // 21
+    head = [
+        f"<b>{correction_label(mode)} BUY: Nifty 500 down {abs(episode.index_drawdown) * 100:.1f}% "
+        f"from its {int(settings['window_sessions']) // 21}-month high</b>",
+        f"High {episode.peak_level:,.0f} on {episode.peak_date:%d %b}; closed {episode.trigger_level:,.0f} "
+        f"on {last_session:%d %b}.",
+        f"Buy these {len(picks)} {_escape(settings['universe'])} stocks at the next open, about "
+        f"Rs {each:,.0f} each. Sell each at its target (its {int(settings['window_sessions']) // 21}-month high; "
+        f"a GTT limit order), or after {months} months. No stop.",
+        "",
+    ]
+    rows = [f"{_escape(p['symbol'])}: target Rs {p['target']:,.2f} (+{p['upside_pct']:.1f}%)"
+            for p in sorted(picks, key=lambda p: -p["upside_pct"])]
+    foot = ["", "<i>Paper test: logged and tracked, not yet a call to trade. The backtest passed narrowly "
+                "and most of its edge came from survivorship.</i>"]
+    messages, chunk = [], head
+    for row in rows:
+        if sum(len(x) + 1 for x in chunk) + len(row) > MAX_LENGTH - 400:
+            messages.append("\n".join(chunk))
+            chunk = [f"<b>{correction_label(mode)} BUY (continued)</b>"]
+        chunk.append(row)
+    messages.append("\n".join(chunk + foot))
+    return messages
+
+
+def correction_exits(exits: list[dict[str, Any]], mode: str) -> str:
+    """Targets reached and six-month exits since the last morning."""
+    lines = [f"<b>{correction_label(mode)} SELL: {len(exits)} trade(s) closed</b>"]
+    for e in exits:
+        why = "target reached" if e["reason"] == "target" else "six months up"
+        lines.append(f"{_escape(e['symbol'])}: Rs {e['exit']:,.2f} on {e['exit_date']:%d %b} ({why}), "
+                     f"{e['gross_pct']:+.1f}% after {e['sessions']} sessions")
+    return "\n".join(lines)
+
+
+def correction_done(result: dict[str, Any], mode: str) -> str:
+    """Every trade in a correction's basket has closed: its score against the two benchmarks."""
+    return "\n".join([
+        f"<b>{correction_label(mode)} BASKET DONE: the {result['trigger_date']:%d %b %Y} correction</b>",
+        f"{result['trades']} trades, {result['reached']} reached their target. Net Rs {result['net']:+,.0f}.",
+        f"Basket {result['basket_pct']:+.1f}% | Nifty 500 trade {result['index_pct']:+.1f}% | "
+        f"every {_escape(result['universe'])} stock {result['every_stock_pct']:+.1f}%",
+        f"Paper so far: {result['done']} baskets, beat the index in {result['beat_index']} and buying every "
+        f"stock in {result['beat_every']}.",
+    ])
+
+
 def intraday_day_summary(day: date, today: list[dict[str, Any]], card: dict[str, Any],
                          verdict: bool | None, why: list[str], max_delay: float | None, mode: str) -> str:
     """The 15:12 wrap-up: today's trades and the running test."""

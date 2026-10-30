@@ -513,6 +513,36 @@ intraday_trades = Table(
     UniqueConstraint("day", "symbol", "mode", name="uq_intraday_trade"),
 )
 
+# Correction buying on paper (src/correction_paper.py): one row per correction,
+# and its result once every trade in the basket has closed.
+correction_episodes = Table(
+    "correction_episodes", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("trigger_date", Date, nullable=False, unique=True),
+    Column("peak_date", Date), Column("peak_level", Float), Column("trigger_level", Float),
+    Column("mode", String(8), nullable=False),       # paper | live
+    Column("created_at", DateTime, default=now),
+    Column("finished_on", Date),
+    Column("basket_pct", Float), Column("index_pct", Float), Column("every_stock_pct", Float),
+)
+
+# One row per stock bought in a correction. Entry is filled at the next open.
+correction_trades = Table(
+    "correction_trades", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("episode_id", Integer, nullable=False),
+    Column("symbol", String(32), nullable=False),
+    Column("target", Float, nullable=False),
+    Column("fall_pct", Float),
+    Column("entry_date", Date), Column("entry", Float), Column("units", Integer),
+    Column("exit_date", Date), Column("exit", Float),
+    Column("reason", String(16)),                    # target | time
+    Column("sessions", Integer), Column("net", Float),
+    Column("closed", Boolean, default=False),
+    Column("updated_at", DateTime, default=now),
+    UniqueConstraint("episode_id", "symbol", name="uq_correction_trade"),
+)
+
 
 # --- Engine -----------------------------------------------------------------
 

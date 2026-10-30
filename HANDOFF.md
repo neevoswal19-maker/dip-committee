@@ -879,6 +879,37 @@ prove no portfolio table is queried. Motion only moves content, never hides
 it (animations do not run in background tabs or link previews). The
 Streamlit dashboard stays private behind its password.
 
+### Correction buying and news catalysts (researched 2026-10-30)
+The owner's two ideas, each tested with rules and pass criteria fixed before
+running (reports in `reports/`):
+
+- **Corrections from the all-time high** (`correction_research.md`, 10/15/20%
+  falls, 2005-2026): every "no stop" variant passed, every -25%-stop variant
+  failed. But buying *every* stock in today's Nifty 500 at the same moment beat
+  the index by almost as much: survivorship (only today's members are in the
+  data), not skill. Not deployed.
+- **Short corrections** (`short_correction_research.md`, the owner's version:
+  5/7/10% below the 3/6/12-month high, sell at the stock's own high or after 6
+  months; 18 variants; must also beat buying every stock): one passed,
+  narrowly - **5% below the 3-month high, Nifty 100**: +4.4% a correction
+  against the index's +2.3%, but only +0.4 points over buying every stock (31
+  of 53). About 2.6 corrections a year.
+- **News catalysts** (`news_research.md`, 386,494 filings since 2018,
+  orders/acquisitions/capacity/approvals): all four failed. After each
+  stock's own drift the news adds about nothing. Not built.
+
+**Paper test of the short-correction variant (since 2026-10-31).** At the
+owner's request it runs on paper in the morning job (`src/correction_paper.py`,
+config `correction:`): when the Nifty 500 closes 5% below its 3-month high, a
+`CORRECTION · PAPER BUY` message lists the Nifty 100 stocks that fell further
+with their targets; the next mornings fill them at the open, walk them with the
+backtest's own `trade()`, send `SELL` messages for targets and 6-month exits,
+and score each finished basket against the index and against buying every
+stock (`BASKET DONE`). Tables `correction_episodes`, `correction_trades`.
+The correction already running on 31 Oct (triggered 15 Sep) was not
+backfilled; the test starts with the next one. Separate from the dip
+strategy; never on the public page.
+
 ## Open questions
 
 - **Does the committee's conviction predict returns?** Still open. It cannot

@@ -577,10 +577,21 @@ etf_swing:
     pharma: [SUNPHARMA, DRREDDY, CIPLA, DIVISLAB, LUPIN]
 
 # -----------------------------------------------------------------------------
-# Correction buying (research only, src/strategy/correction.py). Buys what
-# fell in a market correction and sells at its pre-correction high. Rules and
-# pass criteria fixed 2026-10-30 in the module; nothing is alerted unless the
-# research passes and the owner approves.
+# Correction buying, PAPER (src/correction_paper.py, run by the morning job).
+# The one variant that passed reports/short_correction_research.md: the
+# Nifty 500 closes 5% below its 3-month high -> buy every Nifty 100 stock
+# that fell further, equal money each, at the next open; sell each at its own
+# 3-month high or after 6 months. No stop. It passed narrowly and most of its
+# edge was survivorship, so it runs on paper until the owner decides.
 # -----------------------------------------------------------------------------
 correction:
-  enabled: false
+  enabled: true
+  mode: paper                        # paper only for now
+  index: nifty500
+  universe: NIFTY 100
+  depth_pct: 5.0
+  window_sessions: 63                # 3 months
+  max_hold_sessions: 126             # 6 months
+  basket_capital: 500000             # paper money, split equally
+  slippage: 0.0005
+  trigger_grace_sessions: 3          # a missed morning still catches the trigger
