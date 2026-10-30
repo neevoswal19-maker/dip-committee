@@ -177,21 +177,97 @@ def basket(trades: list[TradeResult], costs_fn, capital: float) -> dict[str, Any
     }
 
 
-def judge(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+def judge(rows: list[dict[str, Any]], criteria: dict[str, Any] = PASS) -> tuple[bool, list[str]]:
     """rows: one per judged episode with basket and index results."""
     reasons = []
     n = len(rows)
-    if n < PASS["min_episodes"]:
-        reasons.append(f"only {n} completed episodes (need {PASS['min_episodes']})")
+    if n < criteria["min_episodes"]:
+        reasons.append(f"only {n} completed episodes (need {criteria['min_episodes']})")
     if n:
         beats = sum(1 for r in rows if r["basket_pct"] > r["index_pct"])
-        if beats / n < PASS["beat_share"]:
+        if beats / n < criteria["beat_share"]:
             reasons.append(f"beat the index in {beats} of {n} episodes (need two-thirds)")
         gap = float(np.mean([r["basket_pct"] - r["index_pct"] for r in rows]))
         if gap <= 0:
             reasons.append(f"averaged {gap:+.1f} points against the index")
         trades = sum(r["trades"] for r in rows)
         hit = sum(r["target_rate"] * r["trades"] for r in rows) / trades if trades else 0.0
-        if hit < PASS["min_target_rate"]:
-            reasons.append(f"{hit:.0%} of trades reached their old high within two years (need 60%)")
+        if hit < criteria["min_target_rate"]:
+            reasons.append(f"{hit:.0%} of trades reached their old high within {criteria.get('hold', 'two years')} "
+                           f"(need {criteria['min_target_rate']:.0%})")
+        if criteria.get("beat_survivors"):
+            control = [r["basket_pct"] - r["survivors_pct"] for r in rows if r.get("survivors_pct") is not None]
+            edge = float(np.mean(control)) if control else 0.0
+            if edge <= 0:
+                reasons.append(f"averaged {edge:+.1f} points against buying every stock (survivorship)")
     return not reasons, reasons
+
+
+# --- Short corrections (added 2026-10-30, rules fixed before running) ----------
+#
+# The owner's version: corrections inside a year, measured from the index's
+# high of the last 3, 6 or 12 months rather than its all-time high, so a fall
+# while the market is still below an old peak (2011, 2013) counts too.
+#
+# - Episode: the index closes X% (5, 7 or 10) below its highest close of the
+#   last W sessions (63, 126 or 252). It ends when the index closes back
+#   within X/2% of its window high; only then can the next one start, so each
+#   leg of a long slide is its own correction.
+# - Target: each stock's highest close over the same W sessions.
+# - Selection: stocks further below that high than the index, with a year of
+#   history. Exit: the target, or after 126 sessions (6 months). No stop.
+
+SHORT_HOLD = 126
+SHORT_MIN_HISTORY = 252
+SHORT_PASS = {"min_episodes": 10, "beat_share": 2 / 3, "min_target_rate": 0.60, "hold": "six months",
+              "beat_survivors": True}
+
+
+def rolling_episodes(close: pd.Series, depth_pct: float, window: int) -> list[Episode]:
+    """Falls of depth_pct from the highest close of the last `window` sessions.
+
+    A correction ends when the index closes back within half the fall of its
+    window high (2.5% for a 5% trigger); only then can the next one start.
+    """
+    close = close.dropna()
+    values, dates = close.to_numpy(float), close.index
+    out: list[Episode] = []
+    current: Episode | None = None
+    in_correction = False
+    for i in range(window - 1, len(values)):
+        lo = i - window + 1
+        j = lo + int(np.argmax(values[lo:i + 1]))
+        high = values[j]
+        if current is not None and current.recovered_date is None and values[i] >= current.peak_level:
+            current.recovered_date = dates[i]
+        if in_correction:
+            in_correction = values[i] <= high * (1 - depth_pct / 200.0)
+            continue
+        if values[i] <= high * (1 - depth_pct / 100.0):
+            current = Episode(depth_pct, dates[j], float(high), dates[i], float(values[i]))
+            out.append(current)
+            in_correction = True
+    return out
+
+
+def window_high(close: pd.Series, trigger_date: pd.Timestamp, window: int) -> float | None:
+    """The stock's highest close over the `window` sessions ending on the trigger day."""
+    close = close.dropna()
+    end = int(close.index.searchsorted(trigger_date, side="right"))
+    part = close.iloc[max(0, end - window):end]
+    return float(part.max()) if not part.empty else None
+
+
+def selected_short(frame: pd.DataFrame, episode: Episode, window: int) -> dict[str, float] | None:
+    """The stock's target and fall, if it fell more than the index from its window high."""
+    close = frame["close"].dropna()
+    history = close[close.index <= episode.trigger_date]
+    if len(history) < SHORT_MIN_HISTORY:
+        return None
+    high = window_high(close, episode.trigger_date, window)
+    if not high:
+        return None
+    fall = float(history.iloc[-1]) / high - 1.0
+    if fall >= episode.index_drawdown:
+        return None
+    return {"target": high, "fall": fall}

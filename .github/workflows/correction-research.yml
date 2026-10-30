@@ -33,11 +33,17 @@ jobs:
       - name: Run the backtest
         run: python jobs/correction_research.py
 
+      - name: Run the short-correction backtest
+        if: always()
+        run: python jobs/short_correction_research.py
+
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: correction-research-${{ github.run_id }}
-          path: reports/correction_*
+          path: |
+            reports/correction_*
+            reports/short_correction_*
           retention-days: 30
           if-no-files-found: warn

@@ -109,3 +109,55 @@ def test_the_verdict():
     assert not ok and any("3 of 5" in w for w in why)
     misses = [{"basket_pct": 20, "index_pct": 10, "trades": 30, "target_rate": 0.4}] * 5
     assert any("40%" in w for w in cr.judge(misses)[1])
+
+
+# --- Short corrections ----------------------------------------------------------
+
+
+def test_short_episodes_count_falls_below_an_old_peak():
+    """Down 20% from an old peak, then a 6% dip and a rebound: the dip counts on its own."""
+    levels = [100.0] * 10 + list(np.linspace(100, 80, 20)) + [80.0] * 60 + list(np.linspace(80, 75, 5)) + [79.0] * 20
+    eps = cr.rolling_episodes(_series(levels), 5, window=63)
+    assert len(eps) == 2
+    assert eps[0].peak_level == pytest.approx(100)
+    assert eps[1].peak_level == pytest.approx(80) and eps[1].trigger_level <= 76
+
+
+def test_each_leg_of_a_staircase_fall_is_its_own_correction():
+    stairs = _series([100.0] * 70 + [88.0] * 70 + [77.0] * 70 + [68.0] * 70)
+    eps = cr.rolling_episodes(stairs, 10, window=63)
+    assert [e.peak_level for e in eps] == [100.0, 88.0, 77.0]
+
+
+def test_a_market_hovering_at_the_line_triggers_once():
+    choppy = _series([100.0] * 63 + [94.8, 95.2, 94.8, 95.2, 94.8, 95.6, 94.7])
+    assert len(cr.rolling_episodes(choppy, 5, window=63)) == 1
+
+
+def test_the_first_check_waits_for_a_full_window():
+    path = _series([100.0, 90.0] + [90.0] * 70)
+    eps = cr.rolling_episodes(path, 5, window=63)
+    assert len(eps) == 1 and eps[0].trigger_date == path.index[62]
+
+
+def test_short_episodes_never_look_ahead():
+    path = _series([100.0] * 70 + list(np.linspace(100, 85, 30)) + list(np.linspace(85, 102, 40)) + [92.0] * 20)
+    full = cr.rolling_episodes(path, 5, window=63)
+    for n in range(70, len(path), 5):
+        early = cr.rolling_episodes(path.iloc[:n], 5, window=63)
+        assert [e.trigger_date for e in early] == [e.trigger_date for e in full if e.trigger_date < path.index[n]]
+
+
+def test_the_short_target_is_the_window_high():
+    close = _series([120.0] + [100.0] * 70 + [90.0])
+    assert cr.window_high(close, close.index[-1], 63) == 100.0      # the 120 is outside the window
+    frame = _frame([100.0] * (cr.SHORT_MIN_HISTORY + 10) + [90.0])
+    ep = cr.Episode(5, frame.index[-20], 100.0, frame.index[-1], 94.0)  # index -6%
+    assert cr.selected_short(frame, ep, 63) == {"target": 100.0, "fall": pytest.approx(-0.10)}
+
+
+def test_the_short_verdict_also_needs_to_beat_buying_everything():
+    row = {"basket_pct": 6, "index_pct": 3, "trades": 30, "target_rate": 0.7, "survivors_pct": 8}
+    ok, why = cr.judge([row] * 12, cr.SHORT_PASS)
+    assert not ok and any("buying every stock" in w for w in why)
+    assert cr.judge([{**row, "survivors_pct": 4}] * 12, cr.SHORT_PASS) == (True, [])
